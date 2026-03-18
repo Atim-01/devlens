@@ -13,6 +13,24 @@ Each issue below maps to one unit of work. Work through them in order — each o
 
 Do not skip ahead. The order is deliberate — infrastructure before features, backend before frontend, data layer before API layer.
 
+**Branch naming convention:** Each issue includes a `Branch` field. Create that branch from `main` before starting the issue, work on it, then open a PR back into `main` when done. The pattern is:
+
+- `feat/` — new feature or capability
+- `test/` — testing and verification work
+- `docs/` — documentation only
+
+Example workflow per issue:
+```
+git checkout main
+git pull
+git checkout -b feat/backend-dependencies-and-config
+# do the work
+git add .
+git commit -m "feat(backend): add Phase 1 dependencies and pydantic settings config"
+git push origin feat/backend-dependencies-and-config
+# open PR → merge into main → delete branch
+```
+
 ---
 
 ## Epic 1 — Project Infrastructure
@@ -22,6 +40,8 @@ Do not skip ahead. The order is deliberate — infrastructure before features, b
 ---
 
 ### Issue 1.1 — Backend dependencies and project config
+
+**Branch:** `feat/backend-dependencies-and-config`
 
 **What:** Install all backend dependencies and configure the project settings layer.
 
@@ -57,6 +77,8 @@ feat(backend): add Phase 1 dependencies and pydantic settings config
 
 ### Issue 1.2 — Database setup and SQLAlchemy base
 
+**Branch:** `feat/backend-database-sqlalchemy-alembic`
+
 **What:** Connect to PostgreSQL, create the SQLAlchemy engine and session factory, and initialise Alembic.
 
 **Why:** Every model, migration, and database operation depends on this foundation.
@@ -90,6 +112,8 @@ feat(backend): configure SQLAlchemy engine, session factory, and Alembic
 
 ### Issue 1.3 — Redis and RQ queue setup
 
+**Branch:** `feat/backend-redis-rq-queue`
+
 **What:** Connect to Redis and initialise the RQ job queue.
 
 **Why:** The webhook receiver enqueues jobs to Redis. The worker reads from Redis. Neither works without this.
@@ -115,6 +139,8 @@ feat(backend): configure Redis connection and RQ job queue
 ---
 
 ### Issue 1.4 — FastAPI app initialisation and health endpoint
+
+**Branch:** `feat/backend-fastapi-app-health-endpoint`
 
 **What:** Create the FastAPI app entry point, register middleware and routers, and add the health endpoint.
 
@@ -157,6 +183,8 @@ feat(backend): initialise FastAPI app with CORS and health endpoint
 ---
 
 ### Issue 2.1 — SQLAlchemy models
+
+**Branch:** `feat/backend-orm-models-all-tables`
 
 **What:** Create all SQLAlchemy ORM models for Phase 1.
 
@@ -250,6 +278,8 @@ feat(backend): add SQLAlchemy ORM models for all Phase 1 tables
 
 ### Issue 2.2 — Initial migration: create tables
 
+**Branch:** `feat/backend-migration-create-initial-tables`
+
 **What:** Generate and apply the Alembic migration that creates all Phase 1 tables.
 
 **Why:** Without applying the migration, the database has no tables and nothing works.
@@ -278,6 +308,8 @@ feat(backend/migrations): create initial tables migration
 ---
 
 ### Issue 2.3 — Indexes migration
+
+**Branch:** `feat/backend-migration-add-indexes`
 
 **What:** Generate and apply a dedicated Alembic migration that adds all indexes.
 
@@ -327,6 +359,8 @@ feat(backend/migrations): add indexing strategy for all high-traffic query patte
 
 ### Issue 3.1 — Pydantic schemas for auth
 
+**Branch:** `feat/backend-auth-pydantic-schemas`
+
 **What:** Define the request and response shapes for all auth operations.
 
 **Why:** Schemas are the contract between the API and its callers. Defining them before the routes means the routes have a clear shape to build towards.
@@ -347,6 +381,8 @@ feat(backend/schemas): add auth request and response schemas
 ---
 
 ### Issue 3.2 — Auth service
+
+**Branch:** `feat/backend-auth-service-oauth-jwt`
 
 **What:** The business logic for GitHub OAuth exchange, user creation, JWT creation and validation.
 
@@ -370,6 +406,8 @@ feat(backend/services): add auth service — OAuth exchange, user upsert, JWT
 
 ### Issue 3.3 — Auth middleware
 
+**Branch:** `feat/backend-auth-middleware-jwt-enforcement`
+
 **What:** FastAPI middleware that decodes the JWT and injects `org_id` and `active_role` into every request before any handler runs.
 
 **Why:** This is the enforcement layer. Every protected route gets `org_id` and `active_role` without having to decode the JWT itself. It is physically impossible to forget auth on a new endpoint when middleware handles it.
@@ -392,6 +430,8 @@ feat(backend/middleware): add JWT auth dependency and rate limiter
 ---
 
 ### Issue 3.4 — Auth routes
+
+**Branch:** `feat/backend-auth-routes-oauth-onboarding`
 
 **What:** The three auth endpoints — GitHub OAuth initiation, OAuth callback, and onboarding.
 
@@ -430,6 +470,8 @@ feat(backend/routes): add GitHub OAuth, callback, and onboarding endpoints
 
 ### Issue 4.1 — Webhook schemas and service
 
+**Branch:** `feat/backend-webhook-service-validate-enqueue`
+
 **What:** The Pydantic schema for the inbound GitHub webhook payload and the service that validates, deduplicates, and enqueues.
 
 **Why:** The webhook receiver must validate the payload shape before touching any business logic. The service handles the logic so the route stays thin.
@@ -464,6 +506,8 @@ feat(backend/services): add webhook service — signature validation, dedup, enq
 ---
 
 ### Issue 4.2 — Webhook route
+
+**Branch:** `feat/backend-webhook-route-github-push`
 
 **What:** The `POST /webhook/github` endpoint — the entry point for all GitHub events.
 
@@ -501,6 +545,8 @@ feat(backend/routes): add POST /webhook/github — validate, dedup, enqueue
 
 ### Issue 5.1 — Abstract AI interface
 
+**Branch:** `feat/backend-ai-abstract-interface`
+
 **What:** The base class that defines the contract every AI implementation must follow.
 
 **Why:** The worker only ever calls this interface. Swapping between HuggingFace and local model requires no changes anywhere else in the system.
@@ -524,6 +570,8 @@ feat(backend/ai): add abstract analyser interface and AnalysisResult dataclass
 ---
 
 ### Issue 5.2 — HuggingFace analyser
+
+**Branch:** `feat/backend-ai-huggingface-analyser`
 
 **What:** The primary AI implementation that calls the HuggingFace inference API.
 
@@ -549,6 +597,8 @@ feat(backend/ai): add HuggingFace analyser implementation
 
 ### Issue 5.3 — Local model analyser
 
+**Branch:** `feat/backend-ai-local-model-fallback`
+
 **What:** The fallback AI implementation that runs a model locally — no API calls, no rate limits.
 
 **Why:** When HuggingFace is down or rate limited, analysis must continue. The local model guarantees availability over quality.
@@ -570,6 +620,8 @@ feat(backend/ai): add local model analyser with lazy loading
 ---
 
 ### Issue 5.4 — Circuit breaker
+
+**Branch:** `feat/backend-ai-circuit-breaker`
 
 **What:** Tracks HuggingFace failures and automatically routes to the local model after 3 consecutive failures.
 
@@ -602,6 +654,8 @@ feat(backend/ai): add circuit breaker — 3 failures trip to local, 5min cooldow
 
 ### Issue 6.1 — Analysis service
 
+**Branch:** `feat/backend-analysis-service-orchestration`
+
 **What:** The orchestration service that a worker job calls — fetch files, analyse, save results.
 
 **Why:** The worker task function should be thin. All logic lives in the service so it is testable independently of RQ.
@@ -631,6 +685,8 @@ feat(backend/services): add analysis service — fetch files, run AI, save resul
 
 ### Issue 6.2 — Notification service
 
+**Branch:** `feat/backend-notification-service-websocket-broadcast`
+
 **What:** Broadcasts job events via WebSocket to all connected clients in the org.
 
 **Why:** `analysis_service` calls `notification_service` after saving results — same pipeline domain. This is the correct cross-service call pattern.
@@ -655,6 +711,8 @@ feat(backend/services): add notification service — WebSocket broadcast with fu
 ---
 
 ### Issue 6.3 — Worker task
+
+**Branch:** `feat/backend-worker-analyse-commit-task`
 
 **What:** The RQ task function that orchestrates the full analysis pipeline for one job.
 
@@ -692,6 +750,8 @@ feat(backend/worker): add analyse_commit task — full pipeline, idempotent, str
 
 ### Issue 7.1 — Dashboard and commit schemas
 
+**Branch:** `feat/backend-dashboard-commit-response-schemas`
+
 **What:** Pydantic response schemas for the developer dashboard and commit results.
 
 **Tasks:**
@@ -720,6 +780,8 @@ feat(backend/schemas): add developer dashboard and commit detail response schema
 
 ### Issue 7.2 — Dashboard service
 
+**Branch:** `feat/backend-dashboard-service-developer-view`
+
 **What:** Queries the database and builds the role-aware dashboard response. Receives the resolved user as a parameter — never re-fetches from auth.
 
 **Tasks:**
@@ -743,6 +805,8 @@ feat(backend/services): add dashboard service — developer view and commit deta
 ---
 
 ### Issue 7.3 — Dashboard and commit routes
+
+**Branch:** `feat/backend-routes-dashboard-commits-repos`
 
 **What:** The REST endpoints the React frontend calls to load dashboard data and commit results.
 
@@ -769,6 +833,8 @@ feat(backend/routes): add developer dashboard, commit detail, and repos endpoint
 ---
 
 ### Issue 7.4 — WebSocket route
+
+**Branch:** `feat/backend-websocket-route-live-events`
 
 **What:** The persistent WebSocket connection that pushes live analysis events to the dashboard.
 
@@ -801,6 +867,8 @@ feat(backend/routes): add WebSocket /ws/live — auth on handshake, full payload
 
 ### Issue 8.1 — Frontend dependencies and project config
 
+**Branch:** `feat/frontend-dependencies-react-query-tailwind`
+
 **What:** Install all frontend dependencies and configure the React Query client and environment.
 
 **Tasks:**
@@ -832,6 +900,8 @@ feat(frontend): add React Query, Axios, React Router, Recharts, and Tailwind
 
 ### Issue 8.2 — Auth context and API client
 
+**Branch:** `feat/frontend-auth-context-axios-client`
+
 **What:** The `AuthContext` that holds the JWT and user state across the app, and the Axios client that attaches the JWT to every request.
 
 **Tasks:**
@@ -859,6 +929,8 @@ feat(frontend): add AuthContext, Axios client with JWT interceptor, useAuth hook
 ---
 
 ### Issue 8.3 — WebSocket context and hook
+
+**Branch:** `feat/frontend-websocket-context-direct-cache-update`
 
 **What:** A single WebSocket connection shared across the entire app via context, with automatic reconnection and direct React Query cache updates.
 
@@ -888,6 +960,8 @@ feat(frontend): add WebSocket context and hook with direct React Query cache upd
 ---
 
 ### Issue 8.4 — App routing and auth guard
+
+**Branch:** `feat/frontend-routing-auth-guard`
 
 **What:** Route definitions and an auth guard that redirects unauthenticated users to login and un-onboarded users to onboarding.
 
@@ -919,6 +993,8 @@ feat(frontend): add app routing, auth guard, and OAuth callback handler
 ---
 
 ### Issue 9.1 — Shared components
+
+**Branch:** `feat/frontend-shared-components-topnav-scores-issues`
 
 **What:** The component building blocks used across every view.
 
@@ -966,6 +1042,8 @@ feat(frontend/components): add shared components — TopNav, ScoreRing, ScoreGri
 
 ### Issue 9.2 — Onboarding page
 
+**Branch:** `feat/frontend-onboarding-role-selection`
+
 **What:** The first-login screen where the user picks their primary role.
 
 **Tasks:**
@@ -986,6 +1064,8 @@ feat(frontend/pages): add onboarding page — role selection on first login
 ---
 
 ### Issue 9.3 — Developer dashboard hooks
+
+**Branch:** `feat/frontend-hooks-dashboard-commit-queries`
 
 **What:** The React Query hooks that fetch developer dashboard data.
 
@@ -1014,6 +1094,8 @@ feat(frontend/hooks): add useDashboard and useCommit React Query hooks
 ---
 
 ### Issue 9.4 — Developer dashboard view
+
+**Branch:** `feat/frontend-developer-dashboard-view`
 
 **What:** The main dashboard the developer sees after every push.
 
@@ -1044,6 +1126,8 @@ feat(frontend/views): add developer dashboard — scores, issues, growth chart, 
 
 ### Issue 9.5 — Commit detail page
 
+**Branch:** `feat/frontend-commit-detail-page`
+
 **What:** The full result page for a single commit — all files, all issues with explanations.
 
 **Tasks:**
@@ -1063,6 +1147,8 @@ feat(frontend/pages): add commit detail page — full result with explanations
 ---
 
 ### Issue 9.6 — Growth chart component
+
+**Branch:** `feat/frontend-growth-chart-recharts`
 
 **What:** The line chart showing a developer's score trend over the last 30 days.
 
@@ -1089,6 +1175,8 @@ feat(frontend/components): add GrowthChart — Recharts line chart for score tre
 ---
 
 ### Issue 10.1 — Cloudflare Tunnel setup
+
+**Branch:** `feat/infra-cloudflare-tunnel-webhook-ingress`
 
 **What:** Expose the local FastAPI server to GitHub webhooks via a stable public URL.
 
@@ -1119,6 +1207,8 @@ docs(infra): add Cloudflare Tunnel setup instructions to README
 
 ### Issue 10.2 — Start the RQ worker
 
+**Branch:** `feat/infra-rq-worker-setup`
+
 **What:** Run the background worker process that pulls jobs from Redis and runs analysis.
 
 **Tasks:**
@@ -1141,6 +1231,8 @@ docs(worker): add RQ worker start instructions to README
 ---
 
 ### Issue 10.3 — End-to-end integration test
+
+**Branch:** `test/phase-1-end-to-end-integration`
 
 **What:** Manually test the complete Phase 1 flow from git push to dashboard result.
 
@@ -1180,6 +1272,8 @@ test(integration): phase 1 end-to-end flow verified
 ---
 
 ### Issue 10.4 — Update README
+
+**Branch:** `docs/phase-1-setup-and-run-instructions`
 
 **What:** Document how to run DevLens Phase 1 from a fresh clone.
 
