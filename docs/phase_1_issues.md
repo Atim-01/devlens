@@ -52,7 +52,7 @@ git push origin feat/backend-dependencies-and-config
   ```
   uv add fastapi uvicorn sqlalchemy alembic psycopg2-binary
   uv add python-jose[cryptography] passlib httpx python-dotenv
-  uv add redis rq pydantic-settings websockets
+  uv add redis Celery pydantic-settings websockets
   ```
 - [ ] Create `app/config.py` — load all env vars via `pydantic-settings` `BaseSettings`:
   - `DATABASE_URL`
@@ -110,11 +110,11 @@ feat(backend): configure SQLAlchemy engine, session factory, and Alembic
 
 ---
 
-### Issue 1.3 — Redis and RQ queue setup
+### Issue 1.3 — Redis + Celery queue setup
 
 **Branch:** `feat/backend-redis-rq-queue`
 
-**What:** Connect to Redis and initialise the RQ job queue.
+**What:** Connect to Redis and initialise the Celery job queue.
 
 **Why:** The webhook receiver enqueues jobs to Redis. The worker reads from Redis. Neither works without this.
 
@@ -123,7 +123,7 @@ feat(backend): configure SQLAlchemy engine, session factory, and Alembic
 - [ ] Update `REDIS_URL` in `.env` (default: `redis://localhost:6379`)
 - [ ] Create `app/worker/queue.py`:
   - Redis connection using `REDIS_URL` from settings
-  - RQ `Queue` instance named `devlens`
+  - Celery `Queue` instance named `devlens`
   - `enqueue_job()` helper function — accepts job function and kwargs
 - [ ] Verify Redis connection:
   ```
@@ -133,7 +133,7 @@ feat(backend): configure SQLAlchemy engine, session factory, and Alembic
 
 **Commit message:**
 ```
-feat(backend): configure Redis connection and RQ job queue
+feat(backend): configure Redis connection and Celery job queue
 ```
 
 ---
@@ -527,7 +527,7 @@ feat(backend/services): add webhook service — signature validation, dedup, enq
 - [ ] Register webhook router in `main.py`
 - [ ] Test with a real GitHub push — check that a job appears in Redis:
   ```
-  redis-cli llen rq:queue:devlens
+  redis-cli llen Celery:queue:devlens
   ```
 
 **Commit message:**
@@ -658,7 +658,7 @@ feat(backend/ai): add circuit breaker — 3 failures trip to local, 5min cooldow
 
 **What:** The orchestration service that a worker job calls — fetch files, analyse, save results.
 
-**Why:** The worker task function should be thin. All logic lives in the service so it is testable independently of RQ.
+**Why:** The worker task function should be thin. All logic lives in the service so it is testable independently of Celery.
 
 **Tasks:**
 - [ ] Create `app/services/analysis_service.py`:
@@ -714,9 +714,9 @@ feat(backend/services): add notification service — WebSocket broadcast with fu
 
 **Branch:** `feat/backend-worker-analyse-commit-task`
 
-**What:** The RQ task function that orchestrates the full analysis pipeline for one job.
+**What:** The Celery task function that orchestrates the full analysis pipeline for one job.
 
-**Why:** This is the function RQ calls. It must be idempotent — safe to retry. Every failure is logged with the job ID.
+**Why:** This is the function Celery calls. It must be idempotent — safe to retry. Every failure is logged with the job ID.
 
 **Tasks:**
 - [ ] Create `app/worker/tasks.py` — `analyse_commit(job_id: str)`:
@@ -733,7 +733,7 @@ feat(backend/services): add notification service — WebSocket broadcast with fu
     - Set `job.error_message`
     - Set `job.status = "failed"` if `retry_count >= 3`
     - Log structured error with `job_id`, `error`, `retry_count`
-    - Re-raise so RQ handles the retry with backoff
+    - Re-raise so Celery handles the retry with backoff
 
 **Commit message:**
 ```
@@ -1205,16 +1205,16 @@ docs(infra): add Cloudflare Tunnel setup instructions to README
 
 ---
 
-### Issue 10.2 — Start the RQ worker
+### Issue 10.2 — Start the Celery worker
 
-**Branch:** `feat/infra-rq-worker-setup`
+**Branch:** `feat/infra-Celery-worker-setup`
 
 **What:** Run the background worker process that pulls jobs from Redis and runs analysis.
 
 **Tasks:**
 - [ ] Start the worker in a separate terminal:
   ```
-  uv run rq worker devlens
+  uv run Celery worker devlens
   ```
 - [ ] Verify the worker is listening — should print:
   ```
@@ -1225,7 +1225,7 @@ docs(infra): add Cloudflare Tunnel setup instructions to README
 
 **Commit message:**
 ```
-docs(worker): add RQ worker start instructions to README
+docs(worker): add Celery worker start instructions to README
 ```
 
 ---
@@ -1241,7 +1241,7 @@ docs(worker): add RQ worker start instructions to README
 **Checklist — run through this in order:**
 - [ ] FastAPI server running on port 8000
 - [ ] Redis running locally
-- [ ] RQ worker running and listening
+- [ ] Celery worker running and listening
 - [ ] Cloudflare Tunnel running and webhook registered on GitHub
 - [ ] React frontend running on port 5173
 
@@ -1290,7 +1290,7 @@ test(integration): phase 1 end-to-end flow verified
     uv run alembic upgrade head
     uv run uvicorn app.main:app --reload
     # In a separate terminal:
-    uv run rq worker devlens
+    uv run Celery worker devlens
     ```
   - Frontend setup:
     ```bash
