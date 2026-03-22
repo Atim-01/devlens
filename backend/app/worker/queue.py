@@ -1,6 +1,13 @@
+import redis
 from celery import Celery
 
 from app.config import settings
+
+redis_conn = redis.from_url(
+    settings.REDIS_URL,
+    decode_responses=False,
+)
+
 
 celery_app = Celery(
     "devlens",
