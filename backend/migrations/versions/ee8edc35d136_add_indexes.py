@@ -5,17 +5,18 @@ Revises: af7528ef00c2
 Create Date: 2026-03-23 15:36:14.997886
 
 """
-from typing import Sequence, Union
 
-from alembic import op
+from collections.abc import Sequence
+from typing import Union
+
 import sqlalchemy as sa
-
+from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = 'ee8edc35d136'
-down_revision: Union[str, Sequence[str], None] = 'af7528ef00c2'
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+revision: str = "ee8edc35d136"
+down_revision: str | Sequence[str] | None = "af7528ef00c2"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
