@@ -10,7 +10,6 @@ from app.services.auth_service import (
     set_primary_role,
 )
 
-
 # ─── JWT Tests ────────────────────────────────────────────────────────────────
 
 
@@ -88,7 +87,7 @@ def test_is_onboarded_true_when_role_set():
 def test_set_primary_role_valid():
     user = make_mock_user(primary_role=None)
     db = MagicMock()
-    result = set_primary_role(db, user, "qa")
+    set_primary_role(db, user, "qa")
     assert user.primary_role == "qa"
     db.flush.assert_called_once()
 
