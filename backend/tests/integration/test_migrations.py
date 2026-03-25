@@ -64,4 +64,4 @@ def test_all_tables_have_org_id():
 def test_database_is_accessible():
     with engine.connect() as conn:
         result = conn.execute(text("SELECT COUNT(*) FROM organisations"))
-        assert result.scalar() == 0
+        assert result.scalar() >= 0

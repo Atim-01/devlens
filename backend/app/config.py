@@ -18,5 +18,13 @@ class Settings(BaseSettings):
     APP_ENV: str = "development"
     FRONTEND_URL: str = "http://localhost:5173"
 
+    # The URL GitHub redirects to after the user approves the OAuth request.
+    # This must match exactly what you register in your GitHub OAuth App settings.
+    # We build it from FRONTEND_URL so it automatically updates between
+    # development and production environments.
+    @property
+    def GITHUB_REDIRECT_URI(self) -> str:
+        return f"{self.FRONTEND_URL}/auth/callback"
+
 
 settings = Settings()
