@@ -16,6 +16,7 @@ Do not skip ahead. The order is deliberate — infrastructure before features, b
 **Branch naming convention:** Each issue includes a `Branch` field. Create that branch from `main` before starting the issue, work on it, then open a PR back into `main` when done. The pattern is:
 
 - `feat/` — new feature or capability
+- `chore/` — tooling, configuration, maintenance
 - `test/` — testing and verification work
 - `docs/` — documentation only
 
@@ -31,6 +32,71 @@ git push origin feat/backend-dependencies-and-config
 # open PR → merge into main → delete branch
 ```
 
+**Code quality standard:** Every issue follows this pattern before committing:
+1. Run `uv run ruff format .` — auto-formats all files
+2. Run `uv run ruff check .` — fixes lint errors (add `--fix` for auto-fixable ones)
+3. Run `uv run pytest -v` — full test suite must pass
+4. Only then commit and push
+
+---
+
+## Pre-Epic — Code Quality Tooling
+
+> One-time setup that every subsequent issue inherits.
+
+---
+
+### Issue 0.1 — Linting, formatting, and test suite setup
+
+**Branch:** `chore/backend-code-quality-tooling`
+
+**Status:** ✅ Complete
+
+**What:** Install and configure ruff for linting and formatting, pytest for testing.
+
+**Tools installed:**
+```
+uv add --dev ruff pytest pytest-asyncio httpx
+```
+
+**pyproject.toml additions:**
+```toml
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"migrations/*" = ["E501", "F401"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+```
+
+**Folder structure created:**
+```
+tests/
+├── __init__.py
+├── conftest.py
+├── unit/
+│   └── __init__.py
+└── integration/
+    └── __init__.py
+```
+
+**Commit message:**
+```
+chore(backend): add ruff linting, formatting, and pytest test suite
+```
+
 ---
 
 ## Epic 1 — Project Infrastructure
@@ -43,30 +109,67 @@ git push origin feat/backend-dependencies-and-config
 
 **Branch:** `feat/backend-dependencies-and-config`
 
+**Status:** ✅ Complete
+
 **What:** Install all backend dependencies and configure the project settings layer.
 
 **Why:** Every subsequent backend issue depends on these packages being available and config being loadable from environment variables.
 
-**Tasks:**
-- [ ] Add all Phase 1 backend dependencies via uv:
-  ```
-  uv add fastapi uvicorn sqlalchemy alembic psycopg2-binary
-  uv add python-jose[cryptography] passlib httpx python-dotenv
-  uv add redis Celery pydantic-settings websockets
-  ```
-- [ ] Create `app/config.py` — load all env vars via `pydantic-settings` `BaseSettings`:
-  - `DATABASE_URL`
-  - `REDIS_URL`
-  - `GITHUB_CLIENT_ID`
-  - `GITHUB_CLIENT_SECRET`
-  - `GITHUB_WEBHOOK_SECRET`
-  - `JWT_SECRET`
-  - `JWT_EXPIRE_HOURS`
-  - `HUGGINGFACE_API_TOKEN`
-  - `APP_ENV` (development / production)
-  - `FRONTEND_URL`
-- [ ] Populate `.env` with placeholder values for all of the above
-- [ ] Verify config loads without error: `uv run python -c "from app.config import settings; print(settings.APP_ENV)"`
+**Key decision — pydantic-settings over python-dotenv directly:**
+We use `pydantic-settings` `BaseSettings` to load environment variables. This gives us type validation on startup — if a required variable is missing or the wrong type, the app fails immediately with a clear error message rather than crashing silently mid-request. We also use `model_config = SettingsConfigDict(env_file=".env")` — the Pydantic V2 pattern — rather than the deprecated inner `Config` class.
+
+**Dependencies installed:**
+```
+uv add fastapi uvicorn sqlalchemy alembic psycopg2-binary
+uv add "python-jose[cryptography]" passlib httpx python-dotenv
+uv add redis celery pydantic-settings websockets hiredis
+uv add python-multipart
+```
+
+Note: `hiredis` added as a performance upgrade — C-based Redis parser significantly faster than the pure Python default.
+
+Note: `rq` was initially planned but replaced with `celery` due to Windows incompatibility. RQ uses Unix `fork` which does not exist on Windows. Celery supports Windows via `worker_pool="solo"`.
+
+**`app/config.py` structure:**
+```python
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env")
+
+    DATABASE_URL: str
+    REDIS_URL: str = "redis://localhost:6379"
+    GITHUB_CLIENT_ID: str
+    GITHUB_CLIENT_SECRET: str
+    GITHUB_WEBHOOK_SECRET: str
+    JWT_SECRET: str
+    JWT_EXPIRE_HOURS: int = 8
+    HUGGINGFACE_API_TOKEN: str
+    APP_ENV: str = "development"
+    FRONTEND_URL: str = "http://localhost:5173"
+
+    @property
+    def GITHUB_REDIRECT_URI(self) -> str:
+        return f"{self.FRONTEND_URL}/auth/callback"
+
+settings = Settings()
+```
+
+**`.env` keys required:**
+```
+DATABASE_URL=postgresql://postgres:YOUR_PASSWORD@localhost:5432/devlens
+REDIS_URL=redis://localhost:6379
+GITHUB_CLIENT_ID=your_github_client_id
+GITHUB_CLIENT_SECRET=your_github_client_secret
+GITHUB_WEBHOOK_SECRET=your_webhook_secret
+JWT_SECRET=your_super_secret_jwt_key
+JWT_EXPIRE_HOURS=8
+HUGGINGFACE_API_TOKEN=your_huggingface_token
+APP_ENV=development
+FRONTEND_URL=http://localhost:5173
+```
+
+**Tests:** `tests/unit/test_config.py` — 2 tests
 
 **Commit message:**
 ```
@@ -79,29 +182,53 @@ feat(backend): add Phase 1 dependencies and pydantic settings config
 
 **Branch:** `feat/backend-database-sqlalchemy-alembic`
 
+**Status:** ✅ Complete
+
 **What:** Connect to PostgreSQL, create the SQLAlchemy engine and session factory, and initialise Alembic.
 
 **Why:** Every model, migration, and database operation depends on this foundation.
 
-**Tasks:**
-- [ ] Install and start PostgreSQL locally (or use a local Docker container)
-- [ ] Create a `devlens` database
-- [ ] Update `DATABASE_URL` in `.env` to point to the local database
-- [ ] Create `app/database.py`:
-  - SQLAlchemy `create_engine()` using `DATABASE_URL` from settings
-  - `SessionLocal` session factory
-  - `Base` declarative base class
-  - `get_db()` dependency function for FastAPI route injection
-- [ ] Initialise Alembic inside the `backend` folder:
-  ```
-  uv run alembic init migrations
-  ```
-- [ ] Configure `migrations/env.py`:
-  - Import `Base` from `app.database`
-  - Import all models (so Alembic detects them)
-  - Set `target_metadata = Base.metadata`
-  - Load `DATABASE_URL` from settings
-- [ ] Verify connection: `uv run alembic current` should return without error
+**Key decision — pool_pre_ping and connection pooling:**
+`pool_pre_ping=True` means SQLAlchemy tests the connection before using it — if the database restarted, it reconnects automatically. `pool_size=10` and `max_overflow=20` allows up to 30 simultaneous connections — enough for multiple workers running concurrently.
+
+**Key decision — alembic.ini URL left empty:**
+We leave `sqlalchemy.url` empty in `alembic.ini` and load it from settings in `env.py` instead. This prevents the database URL from living in two places and getting out of sync between environments.
+
+**`app/database.py` structure:**
+```python
+engine = create_engine(
+    settings.DATABASE_URL,
+    pool_pre_ping=True,
+    pool_size=10,
+    max_overflow=20,
+)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+```
+
+**migrations/env.py key lines:**
+```python
+from logging.config import fileConfig
+
+from alembic import context
+from sqlalchemy import engine_from_config, pool
+
+import app.models  # noqa: F401 — registers all models with Base.metadata
+from app.config import settings
+from app.database import Base
+
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+target_metadata = Base.metadata
+```
+
+**Tests:** `tests/unit/test_database.py` — 4 tests
 
 **Commit message:**
 ```
@@ -110,30 +237,62 @@ feat(backend): configure SQLAlchemy engine, session factory, and Alembic
 
 ---
 
-### Issue 1.3 — Redis + Celery queue setup
+### Issue 1.3 — Redis and Celery queue setup
 
 **Branch:** `feat/backend-redis-rq-queue`
 
-**What:** Connect to Redis and initialise the Celery job queue.
+**Status:** ✅ Complete
 
-**Why:** The webhook receiver enqueues jobs to Redis. The worker reads from Redis. Neither works without this.
+**What:** Connect to Redis and initialise the Celery task queue.
 
-**Tasks:**
-- [ ] Install and start Redis locally
-- [ ] Update `REDIS_URL` in `.env` (default: `redis://localhost:6379`)
-- [ ] Create `app/worker/queue.py`:
-  - Redis connection using `REDIS_URL` from settings
-  - Celery `Queue` instance named `devlens`
-  - `enqueue_job()` helper function — accepts job function and kwargs
-- [ ] Verify Redis connection:
-  ```
-  uv run python -c "from app.worker.queue import redis_conn; print(redis_conn.ping())"
-  ```
-  Should print `True`
+**Why:** The webhook receiver enqueues jobs. The worker reads from the queue. Neither works without this.
+
+**Key decision — Celery over RQ:**
+RQ was the original plan but does not support Windows because it relies on Unix `fork` for its worker process model. Celery is the industry standard Python task queue with full Windows support via `worker_pool="solo"` for development. In production on Linux, `worker_pool` changes to `prefork` for true concurrency — no other changes needed.
+
+**Key decision — task_acks_late and task_reject_on_worker_lost:**
+`task_acks_late=True` means a job is only marked done after the worker successfully completes it — if the worker crashes mid-job the task returns to the queue. `task_reject_on_worker_lost=True` ensures tasks are requeued rather than lost if the worker process dies unexpectedly.
+
+**`app/worker/queue.py` structure:**
+```python
+import redis
+from celery import Celery
+from app.config import settings
+
+redis_conn = redis.from_url(settings.REDIS_URL, decode_responses=False)
+
+celery_app = Celery(
+    "devlens",
+    broker=settings.REDIS_URL,
+    backend=settings.REDIS_URL,
+    include=["app.worker.tasks"],
+)
+
+celery_app.conf.update(
+    task_serializer="json",
+    accept_content=["json"],
+    result_serializer="json",
+    timezone="UTC",
+    enable_utc=True,
+    task_acks_late=True,
+    task_reject_on_worker_lost=True,
+    worker_pool="solo",
+    task_max_retries=3,
+    task_default_retry_delay=30,
+)
+
+def enqueue_job(task_func, **kwargs):
+    return task_func.apply_async(kwargs=kwargs)
+```
+
+**Redis on Windows:**
+Use Memurai (memurai.com) — a native Windows Redis-compatible server for development. Free developer edition. Installs and runs as a Windows service automatically.
+
+**Tests:** `tests/unit/test_queue.py` — 6 tests
 
 **Commit message:**
 ```
-feat(backend): configure Redis connection and Celery job queue
+feat(backend): configure Celery with Redis as task queue (replaces RQ — Windows compatible)
 ```
 
 ---
@@ -142,32 +301,58 @@ feat(backend): configure Redis connection and Celery job queue
 
 **Branch:** `feat/backend-fastapi-app-health-endpoint`
 
+**Status:** ✅ Complete
+
 **What:** Create the FastAPI app entry point, register middleware and routers, and add the health endpoint.
 
-**Why:** Without a running FastAPI app nothing can be tested. The health endpoint is the first thing that can be demoed.
+**Why:** Without a running FastAPI app nothing can be tested. The health endpoint is the first demonstrable piece of the system.
 
-**Tasks:**
-- [ ] Create `app/main.py`:
-  - FastAPI app instance with title `DevLens`
-  - CORS middleware allowing `FRONTEND_URL` from settings
-  - Router registration (routers will be added in later issues — register them here as they are created)
-- [ ] Create `app/routes/health.py`:
-  - `GET /api/health` — returns:
-    ```json
-    {
-      "status": "ok",
-      "queue_depth": 0,
-      "ai_engine": "huggingface",
-      "app_env": "development"
-    }
-    ```
-  - No auth required
-- [ ] Register health router in `main.py`
-- [ ] Run the server and verify health endpoint responds:
-  ```
-  uv run uvicorn app.main:app --reload
-  curl http://localhost:8000/api/health
-  ```
+**Key decision — lifespan over on_event:**
+FastAPI deprecated `@app.on_event("startup")` and `@app.on_event("shutdown")` in favour of the `lifespan` context manager pattern. We use `lifespan` from the start to avoid deprecation warnings and align with current FastAPI best practice. Everything before the `yield` in lifespan runs on startup, everything after runs on shutdown.
+
+**Key decision — CORS limited to FRONTEND_URL:**
+The CORS middleware only allows requests from `settings.FRONTEND_URL` — not the entire world. This means the API is only callable from our React frontend in the browser. Direct curl calls still work because curl does not send an Origin header.
+
+**`app/main.py` structure:**
+```python
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from app.config import settings
+from app.routes.auth import router as auth_router
+from app.routes.health import router as health_router
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+
+app = FastAPI(
+    title="DevLens",
+    description="AI-powered code review analyst",
+    version="0.1.0",
+    lifespan=lifespan,
+)
+
+app.add_middleware(CORSMiddleware, allow_origins=[settings.FRONTEND_URL], ...)
+app.include_router(health_router)
+app.include_router(auth_router)
+```
+
+**Health endpoint response:**
+```json
+{
+  "status": "ok",
+  "queue_depth": 0,
+  "redis_connected": true,
+  "worker_count": 0,
+  "ai_engine": "huggingface",
+  "app_env": "development"
+}
+```
+
+**Interactive API docs available at:** `http://localhost:8000/docs`
+
+**Tests:** `tests/unit/test_main.py` — 6 tests
 
 **Commit message:**
 ```
@@ -186,88 +371,33 @@ feat(backend): initialise FastAPI app with CORS and health endpoint
 
 **Branch:** `feat/backend-orm-models-all-tables`
 
-**What:** Create all SQLAlchemy ORM models for Phase 1.
+**Status:** ✅ Complete
+
+**What:** Create all SQLAlchemy ORM models for Phase 1 using the modern `Mapped` and `mapped_column` API.
 
 **Why:** Models define the shape of the database. Alembic reads them to generate migrations. Every service that touches the database uses these.
 
-**Tasks:**
-- [ ] Create `app/models/organisation.py` — `Organisation` model:
-  - `id` UUID PK
-  - `github_id` BIGINT UNIQUE
-  - `name` VARCHAR(255)
-  - `is_personal` BOOLEAN DEFAULT false
-  - `created_at` TIMESTAMPTZ DEFAULT now()
+**Key decision — Mapped and mapped_column over Column:**
+We use SQLAlchemy 2.0's modern `Mapped[type]` annotation syntax rather than the legacy `Column()` approach. This gives us full type safety — your IDE understands exactly what type each column holds. `Mapped[str | None]` clearly communicates a nullable column in a way `Column(String, nullable=True)` does not.
 
-- [ ] Create `app/models/user.py` — `User` model:
-  - `id` UUID PK
-  - `org_id` UUID FK → organisations
-  - `github_id` BIGINT UNIQUE
-  - `username` VARCHAR(255)
-  - `email` VARCHAR(255) NULLABLE
-  - `primary_role` VARCHAR(50) NULLABLE (null = not yet onboarded)
-  - `avatar_url` TEXT NULLABLE
-  - `created_at` TIMESTAMPTZ DEFAULT now()
+**Key decision — UUID primary keys:**
+All primary keys are UUIDs rather than auto-incrementing integers. UUIDs are safe to expose in URLs — they reveal nothing about table size or insertion order. Integer IDs like `/commits/1` tell an attacker exactly how many commits exist.
 
-- [ ] Create `app/models/repo.py` — `Repo` model:
-  - `id` UUID PK
-  - `org_id` UUID FK → organisations
-  - `github_repo_id` BIGINT UNIQUE
-  - `name` VARCHAR(255)
-  - `full_name` VARCHAR(255)
-  - `default_branch` VARCHAR(100) DEFAULT `main`
-  - `webhook_id` BIGINT NULLABLE
-  - `security_threshold` SMALLINT DEFAULT 70
-  - `created_at` TIMESTAMPTZ DEFAULT now()
+**Key decision — is_personal flag on Organisation:**
+Rather than having separate models for personal accounts and team accounts, every user gets an `Organisation` row with `is_personal=True` for personal GitHub accounts. This means the same `org_id` scoping logic works identically for both — no special cases anywhere in the codebase.
 
-- [ ] Create `app/models/commit.py` — `Commit` model:
-  - `id` UUID PK
-  - `org_id` UUID FK → organisations
-  - `repo_id` UUID FK → repos
-  - `sha` VARCHAR(40) UNIQUE
-  - `branch` VARCHAR(255)
-  - `author_github_id` BIGINT NULLABLE
-  - `message` TEXT
-  - `files_changed` INTEGER DEFAULT 0
-  - `pushed_at` TIMESTAMPTZ DEFAULT now()
+**Models created:**
+- `app/models/organisation.py` — `Organisation`
+- `app/models/user.py` — `User` (primary_role nullable = not yet onboarded)
+- `app/models/repo.py` — `Repo` (security_threshold column for CI gate)
+- `app/models/commit.py` — `Commit`
+- `app/models/job.py` — `Job` (queue_wait_ms, analysis_ms, end_to_end_ms for observability)
+- `app/models/score.py` — `Score`
+- `app/models/issue.py` — `Issue` (explanation + suggestion columns for learning)
 
-- [ ] Create `app/models/job.py` — `Job` model:
-  - `id` UUID PK
-  - `org_id` UUID FK → organisations
-  - `commit_id` UUID FK → commits
-  - `status` VARCHAR(20) DEFAULT `pending` (pending / processing / complete / failed)
-  - `retry_count` INTEGER DEFAULT 0
-  - `ai_engine` VARCHAR(20) NULLABLE (huggingface / local)
-  - `degraded` BOOLEAN DEFAULT false
-  - `queue_wait_ms` INTEGER NULLABLE
-  - `analysis_ms` INTEGER NULLABLE
-  - `end_to_end_ms` INTEGER NULLABLE
-  - `error_message` TEXT NULLABLE
-  - `created_at` TIMESTAMPTZ DEFAULT now()
-  - `completed_at` TIMESTAMPTZ NULLABLE
+**`app/models/__init__.py` exports all models so Alembic detects them.**
 
-- [ ] Create `app/models/score.py` — `Score` model:
-  - `id` UUID PK
-  - `org_id` UUID FK → organisations
-  - `commit_id` UUID FK → commits
-  - `dimension` VARCHAR(20) (security / performance / readability / complexity / bug_risk)
-  - `score` SMALLINT
-  - `created_at` TIMESTAMPTZ DEFAULT now()
-
-- [ ] Create `app/models/issue.py` — `Issue` model:
-  - `id` UUID PK
-  - `org_id` UUID FK → organisations
-  - `commit_id` UUID FK → commits
-  - `file_path` TEXT
-  - `line_number` INTEGER NULLABLE
-  - `dimension` VARCHAR(20)
-  - `severity` VARCHAR(10) (critical / warning / info)
-  - `title` VARCHAR(255)
-  - `explanation` TEXT
-  - `suggestion` TEXT
-  - `created_at` TIMESTAMPTZ DEFAULT now()
-
-- [ ] Import all models in `app/models/__init__.py`
-- [ ] Import all models in `migrations/env.py` so Alembic detects them
+**Tests:** `tests/unit/test_models.py` — 14 tests
 
 **Commit message:**
 ```
@@ -280,25 +410,28 @@ feat(backend): add SQLAlchemy ORM models for all Phase 1 tables
 
 **Branch:** `feat/backend-migration-create-initial-tables`
 
+**Status:** ✅ Complete
+
 **What:** Generate and apply the Alembic migration that creates all Phase 1 tables.
 
 **Why:** Without applying the migration, the database has no tables and nothing works.
 
-**Tasks:**
-- [ ] Generate migration:
-  ```
-  uv run alembic revision --autogenerate -m "create_initial_tables"
-  ```
-- [ ] Review the generated file in `migrations/versions/` — confirm all 7 tables are present
-- [ ] Apply migration:
-  ```
-  uv run alembic upgrade head
-  ```
-- [ ] Verify tables exist in PostgreSQL:
-  ```
-  psql devlens -c "\dt"
-  ```
-  Should list: organisations, users, repos, commits, jobs, scores, issues
+**Key decision — autogenerate for table creation:**
+We use `--autogenerate` for the initial tables migration because Alembic can compare our models to the empty database and generate the correct SQL. We do NOT use autogenerate for indexes — those are written manually in their own migration.
+
+**Commands run:**
+```
+uv run alembic revision --autogenerate -m "create_initial_tables"
+uv run alembic upgrade head
+```
+
+**Verification:**
+```
+psql -U postgres -d devlens -c "\dt"
+```
+Should list: commits, issues, jobs, organisations, repos, scores, users
+
+**Tests:** `tests/integration/test_migrations.py` — 7 tests
 
 **Commit message:**
 ```
@@ -311,38 +444,31 @@ feat(backend/migrations): create initial tables migration
 
 **Branch:** `feat/backend-migration-add-indexes`
 
+**Status:** ✅ Complete
+
 **What:** Generate and apply a dedicated Alembic migration that adds all indexes.
 
-**Why:** Without indexes the system works under light load but breaks under team-level concurrency. Indexes are always in their own migration — never mixed with table creation.
+**Why:** Without indexes the system works under light load but breaks under team-level concurrency. A full table scan on `jobs` on every worker poll is catastrophic at scale.
 
-**Tasks:**
-- [ ] Generate blank migration:
-  ```
-  uv run alembic revision -m "add_indexes"
-  ```
-- [ ] Manually add all indexes to the `upgrade()` function:
-  ```python
-  op.create_index("idx_users_github_id", "users", ["github_id"])
-  op.create_index("idx_repos_org", "repos", ["org_id"])
-  op.create_index("idx_commits_org_repo", "commits", ["org_id", "repo_id"])
-  op.create_index("idx_commits_org_pushed", "commits", ["org_id", "pushed_at"],
-      postgresql_ops={"pushed_at": "DESC"})
-  op.create_index("idx_commits_author", "commits", ["author_github_id"])
-  op.create_index("idx_jobs_status", "jobs", ["status"])
-  op.create_index("idx_jobs_commit", "jobs", ["commit_id"])
-  op.create_index("idx_jobs_status_retry", "jobs", ["status", "retry_count"])
-  op.create_index("idx_scores_commit", "scores", ["commit_id"])
-  op.create_index("idx_scores_org_dimension", "scores", ["org_id", "dimension"])
-  op.create_index("idx_issues_commit", "issues", ["commit_id"])
-  op.create_index("idx_issues_org_severity", "issues", ["org_id", "severity"])
-  op.create_index("idx_issues_org_dimension", "issues", ["org_id", "dimension"])
-  ```
-- [ ] Add corresponding `drop_index` calls to `downgrade()`
-- [ ] Apply migration:
-  ```
-  uv run alembic upgrade head
-  ```
-- [ ] Verify: `uv run alembic current` should show head
+**Key decision — indexes in their own migration:**
+Indexes are never mixed with table creation migrations. Keeping them separate means they can be dropped and recreated independently without touching the schema.
+
+**Key decision — no autogenerate for indexes:**
+Alembic's autogenerate does not reliably detect custom indexes. We write them manually.
+
+**Indexes created:**
+```
+users:         idx_users_github_id
+repos:         idx_repos_org
+commits:       idx_commits_org_repo, idx_commits_org_pushed, idx_commits_author
+jobs:          idx_jobs_status, idx_jobs_commit, idx_jobs_status_retry
+scores:        idx_scores_commit, idx_scores_org_dimension
+issues:        idx_issues_commit, idx_issues_org_severity, idx_issues_org_dimension
+```
+
+**downgrade() function fully implemented** — every index can be dropped cleanly.
+
+**Tests:** `tests/integration/test_indexes.py` — 7 tests
 
 **Commit message:**
 ```
@@ -353,7 +479,7 @@ feat(backend/migrations): add indexing strategy for all high-traffic query patte
 
 ## Epic 3 — Authentication
 
-> GitHub OAuth login, JWT issuance, onboarding screen, and middleware that enforces auth on every route.
+> GitHub OAuth login, JWT issuance, onboarding, role switching, and middleware that enforces auth on every route.
 
 ---
 
@@ -361,17 +487,21 @@ feat(backend/migrations): add indexing strategy for all high-traffic query patte
 
 **Branch:** `feat/backend-auth-pydantic-schemas`
 
-**What:** Define the request and response shapes for all auth operations.
+**Status:** ✅ Complete
 
-**Why:** Schemas are the contract between the API and its callers. Defining them before the routes means the routes have a clear shape to build towards.
+**What:** Define the request and response shapes for all auth operations and the GitHub webhook payload.
 
-**Tasks:**
-- [ ] Create `app/schemas/auth.py`:
-  - `GitHubCallbackQuery` — `code: str`, `state: str`
-  - `OnboardingRequest` — `primary_role: str`
-  - `JWTPayload` — `user_id: str`, `org_id: str`, `github_id: int`, `primary_role: str`, `active_role: str`, `exp: int`
-  - `AuthResponse` — `access_token: str`, `token_type: str = "bearer"`
-  - `UserResponse` — `id: str`, `username: str`, `avatar_url: str`, `primary_role: str`, `active_role: str`, `org_id: str`
+**Key decision — model_config extra=ignore on webhook schema:**
+`GitHubPushPayload` uses `model_config = {"extra": "ignore"}` — any fields GitHub sends that we have not defined are silently stripped. GitHub sends dozens of fields we do not need.
+
+**Key decision — from_attributes on UserResponse:**
+`model_config = {"from_attributes": True}` allows Pydantic to build the response directly from a SQLAlchemy model instance without manually constructing a dict.
+
+**Schemas created:**
+- `app/schemas/auth.py` — GitHubCallbackQuery, OnboardingRequest, RoleSwitchRequest, JWTPayload, AuthResponse, UserResponse
+- `app/schemas/webhook.py` — GitHubRepository, GitHubPusher, GitHubCommit, GitHubPushPayload
+
+**Tests:** `tests/unit/test_auth_schemas.py` — 8 tests, `tests/unit/test_webhook_schemas.py` — 4 tests
 
 **Commit message:**
 ```
@@ -384,18 +514,36 @@ feat(backend/schemas): add auth request and response schemas
 
 **Branch:** `feat/backend-auth-service-oauth-jwt`
 
+**Status:** ✅ Complete
+
 **What:** The business logic for GitHub OAuth exchange, user creation, JWT creation and validation.
 
-**Why:** Services contain the logic. Routes call services. Keeping them separate means the logic is testable without spinning up HTTP.
+**Key decision — HS256 over RS256:**
+We use symmetric signing because DevLens is a single-server application. RS256 (asymmetric) is needed when multiple separate services verify tokens — we do not have that complexity yet.
 
-**Tasks:**
-- [ ] Create `app/services/auth_service.py`:
-  - `exchange_github_code(code)` — POST to GitHub OAuth token endpoint, return access token
-  - `get_github_user(access_token)` — GET github.com/api/user, return user profile dict
-  - `get_or_create_user(db, github_user)` — upsert user + org in DB, return User model
-  - `create_jwt(user)` — sign JWT with `JWT_SECRET`, include all payload fields, set expiry
-  - `decode_jwt(token)` — verify and decode, raise `HTTPException(401)` on invalid
-  - `is_onboarded(user)` — return True if `primary_role` is not null
+**Key decision — GitHub ID not username as foreign key:**
+GitHub's numeric `id` is our permanent link. Usernames can change; IDs never do.
+
+**Key decision — active_role in JWT not database:**
+Role switching issues a new JWT rather than writing to the database. Role is a UI preference, not a security boundary.
+
+**Key decision — db.flush() not db.commit() in service:**
+Services use `flush()` to get generated IDs without committing. The route handler controls the transaction boundary — if anything fails after the service call, the entire transaction rolls back cleanly.
+
+**Key decision — httpx over requests:**
+FastAPI is async. The `requests` library is blocking and would freeze the event loop.
+
+**Functions in `app/services/auth_service.py`:**
+- `exchange_github_code(code)` — trades OAuth code for GitHub access token
+- `get_github_user(access_token)` — fetches user profile from GitHub API
+- `get_or_create_org(db, github_user)` — upserts organisation row
+- `get_or_create_user(db, github_user)` — upserts user row
+- `set_primary_role(db, user, role)` — sets role during onboarding
+- `is_onboarded(user)` — True if primary_role is not None
+- `create_jwt(user, active_role=None)` — signs JWT with all payload fields
+- `decode_jwt(token)` — verifies and decodes JWT, raises ValueError on failure
+
+**Tests:** `tests/unit/test_auth_service.py` — 14 tests
 
 **Commit message:**
 ```
@@ -408,19 +556,32 @@ feat(backend/services): add auth service — OAuth exchange, user upsert, JWT
 
 **Branch:** `feat/backend-auth-middleware-jwt-enforcement`
 
-**What:** FastAPI middleware that decodes the JWT and injects `org_id` and `active_role` into every request before any handler runs.
+**Status:** ✅ Complete
 
-**Why:** This is the enforcement layer. Every protected route gets `org_id` and `active_role` without having to decode the JWT itself. It is physically impossible to forget auth on a new endpoint when middleware handles it.
+**What:** FastAPI dependencies that decode the JWT and inject `org_id` and `active_role` into every protected route before the handler runs.
 
-**Tasks:**
-- [ ] Create `app/middleware/auth.py`:
-  - `get_current_user(token, db)` — FastAPI dependency
-  - Decodes JWT using `auth_service.decode_jwt()`
-  - Looks up user in DB by `user_id` from JWT
-  - Returns user object — injected into any route that declares it as a dependency
-- [ ] Create `app/middleware/rate_limit.py`:
-  - In-memory rate limiter — 100 requests per minute per JWT identity
-  - Returns `HTTPException(429)` with `Retry-After` header on exceed
+**Key decision — DB lookup on every request:**
+We look up the user in the database on every request. If a user is deleted or suspended, the change takes effect immediately — not after their JWT expires. The cost is one indexed DB query per request.
+
+**Key decision — generic 401 error message:**
+We never tell callers whether the token was missing, expired, or tampered with — specific error messages help attackers understand what to fix.
+
+**Key decision — sliding window rate limiting:**
+Sliding window counts the last 60 seconds from now rather than fixed buckets, preventing burst patterns that exploit bucket boundaries.
+
+**Key decision — in-memory rate limit store:**
+Rate limit counters are in-memory per process for Phase 1. Move to Redis when scaling horizontally.
+
+**Dependencies in `app/middleware/auth.py`:**
+- `get_current_user` — validates JWT, looks up user in DB, returns User object
+- `get_active_role` — extracts active_role from JWT without DB lookup
+- `get_org_id` — extracts org_id from JWT without DB lookup
+
+**`app/middleware/rate_limit.py`:**
+- 100 requests per minute per JWT identity (falls back to IP for unauthenticated endpoints)
+- Returns 429 with `Retry-After` header on exceed
+
+**Tests:** `tests/unit/test_auth_middleware.py` — 7 tests, `tests/unit/test_rate_limit.py` — 4 tests
 
 **Commit message:**
 ```
@@ -433,27 +594,44 @@ feat(backend/middleware): add JWT auth dependency and rate limiter
 
 **Branch:** `feat/backend-auth-routes-oauth-onboarding`
 
-**What:** The three auth endpoints — GitHub OAuth initiation, OAuth callback, and onboarding.
+**Status:** ✅ Complete
 
-**Why:** These are the entry points to the entire application. Nothing else works until a user can log in.
+**What:** The auth endpoints — GitHub OAuth initiation, OAuth callback, onboarding, role switching, and current user.
 
-**Tasks:**
-- [ ] Create `app/routes/auth.py`:
-  - `GET /auth/github` — redirect to GitHub OAuth consent URL with `client_id` and `state`
-  - `GET /auth/callback`:
-    - Receive `code` and `state` from GitHub
-    - Call `auth_service.exchange_github_code(code)`
-    - Call `auth_service.get_github_user(access_token)`
-    - Call `auth_service.get_or_create_user(db, github_user)`
-    - If `user.primary_role` is null → redirect to `FRONTEND_URL/onboarding`
-    - Else → issue JWT, redirect to `FRONTEND_URL/dashboard` with token
-  - `POST /auth/onboarding` (protected):
-    - Accepts `OnboardingRequest` — `primary_role`
-    - Validates role is one of: developer, senior, qa, devops, cso
-    - Sets `user.primary_role` in DB
-    - Returns new `AuthResponse` with updated JWT
-- [ ] Register auth router in `main.py`
-- [ ] Test OAuth flow manually with a real GitHub account
+**Key decision — RedirectResponse over returning URL as JSON:**
+The login endpoint returns a redirect directly. The browser follows it automatically — cleaner UX than the frontend parsing a URL and redirecting itself.
+
+**Key decision — token in URL query param not cookie:**
+JWT passed as a query parameter for Phase 1 simplicity. A future security hardening phase would switch to HTTP-only cookies.
+
+**Key decision — generic error on OAuth failure:**
+When the OAuth callback fails we redirect to `/login?error=auth_failed`. We never expose the actual exception in the URL.
+
+**Key decision — dependency_overrides for testing:**
+FastAPI captures dependency references at startup, not at call time. Patching the import does not work. We use `app.dependency_overrides[get_current_user] = lambda: mock_user` in tests — this tells FastAPI directly to use our mock.
+
+**GitHub OAuth App setup required:**
+- GitHub → Settings → Developer settings → OAuth Apps → New OAuth App
+- Homepage URL: `http://localhost:5173`
+- Callback URL: `http://localhost:5173/auth/callback`
+- Copy Client ID and Client Secret to `.env`
+
+**Endpoints in `app/routes/auth.py`:**
+- `GET /auth/github` — redirect to GitHub OAuth consent screen
+- `GET /auth/callback` — handle GitHub redirect, create user, issue JWT
+- `POST /auth/onboarding` — set primary_role on first login (protected)
+- `POST /auth/switch-role` — update active_role in session, issue new JWT (protected)
+- `GET /auth/me` — return current user profile (protected)
+
+**Testing via Swagger UI:**
+1. Visit `http://localhost:8000/auth/github` in browser
+2. Complete GitHub OAuth flow
+3. Copy token from redirect URL (everything after `token=`)
+4. Open `http://localhost:8000/docs`
+5. Click Authorize → paste token (without "Bearer" prefix — Swagger adds it)
+6. Test any protected endpoint
+
+**Tests:** `tests/unit/test_auth_routes.py` — 11 tests
 
 **Commit message:**
 ```
@@ -472,15 +650,11 @@ feat(backend/routes): add GitHub OAuth, callback, and onboarding endpoints
 
 **Branch:** `feat/backend-webhook-service-validate-enqueue`
 
-**What:** The Pydantic schema for the inbound GitHub webhook payload and the service that validates, deduplicates, and enqueues.
+**Status:** 🔲 Not started
 
-**Why:** The webhook receiver must validate the payload shape before touching any business logic. The service handles the logic so the route stays thin.
+**What:** The service that validates the GitHub webhook signature, deduplicates by commit SHA, and enqueues the analysis job.
 
 **Tasks:**
-- [ ] Create `app/schemas/webhook.py`:
-  - `GitHubPushPayload` — `ref: str`, `after: str` (commit SHA), `repository: dict`, `commits: list`, `pusher: dict`
-  - Strip and ignore all unexpected fields
-
 - [ ] Create `app/services/webhook_service.py`:
   - `validate_signature(payload_bytes, signature_header)`:
     - Compute HMAC-SHA256 of raw payload bytes using `GITHUB_WEBHOOK_SECRET`
@@ -491,12 +665,14 @@ feat(backend/routes): add GitHub OAuth, callback, and onboarding endpoints
     - Return True if exists
   - `mark_processed(redis_conn, sha)`:
     - Set `devlens:dedup:{sha}` in Redis with 86400s TTL (24 hours)
-  - `enqueue_analysis(db, redis_conn, payload)`:
-    - Create `Commit` row in DB (status pending)
-    - Create `Job` row in DB
-    - Call `queue.enqueue_job(analyse_commit, job_id=job.id)`
+  - `enqueue_analysis(db, sha, repo_full_name, changed_files, pusher)`:
+    - Create `Commit` row in DB
+    - Create `Job` row in DB (status: pending)
+    - Call `enqueue_job(analyse_commit, job_id=str(job.id))`
     - Call `mark_processed(redis_conn, sha)`
     - Return job id
+- [ ] Write tests in `tests/unit/test_webhook_service.py`
+- [ ] Run ruff and full test suite
 
 **Commit message:**
 ```
@@ -509,26 +685,25 @@ feat(backend/services): add webhook service — signature validation, dedup, enq
 
 **Branch:** `feat/backend-webhook-route-github-push`
 
-**What:** The `POST /webhook/github` endpoint — the entry point for all GitHub events.
+**Status:** 🔲 Not started
 
-**Why:** This is the trigger for everything. Without it, no analysis ever starts.
+**What:** The `POST /webhook/github` endpoint — the entry point for all GitHub push events.
 
 **Tasks:**
 - [ ] Create `app/routes/webhook.py`:
   - `POST /webhook/github`:
-    - Read raw request body as bytes (required for HMAC validation)
-    - Call `webhook_service.validate_signature()` — 401 on failure
+    - Read raw request body as bytes (required for HMAC validation — parsing first corrupts the bytes)
+    - Validate `X-Hub-Signature-256` header via `webhook_service.validate_signature()`
+    - Only process `push` events — check `X-GitHub-Event` header, return 200 silently for all others
     - Parse body as `GitHubPushPayload`
-    - Only process `push` events — return 200 silently for all others
+    - Skip branch deletions — `payload.after` will be all zeros on delete events
     - Check `webhook_service.is_duplicate()` — return 200 silently if duplicate
     - Call `webhook_service.enqueue_analysis()`
     - Return `HTTP 202 Accepted` immediately
-    - Total response time must be under 200ms
+    - Total response time must be under 200ms — GitHub retries on slow responses
 - [ ] Register webhook router in `main.py`
-- [ ] Test with a real GitHub push — check that a job appears in Redis:
-  ```
-  redis-cli llen Celery:queue:devlens
-  ```
+- [ ] Write tests in `tests/unit/test_webhook_route.py`
+- [ ] Run ruff and full test suite
 
 **Commit message:**
 ```
@@ -547,20 +722,18 @@ feat(backend/routes): add POST /webhook/github — validate, dedup, enqueue
 
 **Branch:** `feat/backend-ai-abstract-interface`
 
-**What:** The base class that defines the contract every AI implementation must follow.
+**Status:** 🔲 Not started
 
-**Why:** The worker only ever calls this interface. Swapping between HuggingFace and local model requires no changes anywhere else in the system.
+**What:** The base class that defines the contract every AI implementation must follow.
 
 **Tasks:**
 - [ ] Create `app/ai/base.py`:
   - `AnalysisResult` dataclass:
-    - `scores: dict` — keys are dimension names, values are 0–100 integers
-    - `issues: list[dict]` — each with `file_path`, `line_number`, `dimension`, `severity`, `title`, `explanation`, `suggestion`
-    - `engine: str` — which engine produced this result
-    - `degraded: bool` — True if local fallback ran
+    - `scores: dict`, `issues: list[dict]`, `engine: str`, `degraded: bool`
   - `BaseAnalyser` abstract class:
     - `analyse(files: list[dict]) -> AnalysisResult` — abstract method
-    - `files` is a list of dicts: `{path: str, content: str, language: str}`
+- [ ] Write tests in `tests/unit/test_ai_base.py`
+- [ ] Run ruff and full test suite
 
 **Commit message:**
 ```
@@ -573,20 +746,19 @@ feat(backend/ai): add abstract analyser interface and AnalysisResult dataclass
 
 **Branch:** `feat/backend-ai-huggingface-analyser`
 
-**What:** The primary AI implementation that calls the HuggingFace inference API.
+**Status:** 🔲 Not started
 
-**Why:** This is the cloud AI engine that runs during normal operation.
+**What:** The primary AI implementation that calls the HuggingFace inference API.
 
 **Tasks:**
 - [ ] Create `app/ai/huggingface.py` — `HuggingFaceAnalyser(BaseAnalyser)`:
-  - Uses `httpx` to call HuggingFace inference API
-  - Model: `microsoft/codebert-base` for code analysis
-  - 25 second timeout on every call
-  - For each file: call API, parse response into scores and issues
-  - Each issue must include a generated `explanation` and `suggestion` — use HuggingFace text generation for these
+  - Model: `microsoft/codebert-base`
+  - 25 second timeout on every API call
+  - Each issue includes generated `explanation` and `suggestion`
   - Return `AnalysisResult(engine="huggingface", degraded=False)`
-  - Raise `httpx.TimeoutException` on timeout — caller handles this
-  - API token from `settings.HUGGINGFACE_API_TOKEN`
+  - Raise `httpx.TimeoutException` on timeout
+- [ ] Write tests in `tests/unit/test_huggingface_analyser.py` (mock HTTP calls)
+- [ ] Run ruff and full test suite
 
 **Commit message:**
 ```
@@ -599,18 +771,18 @@ feat(backend/ai): add HuggingFace analyser implementation
 
 **Branch:** `feat/backend-ai-local-model-fallback`
 
+**Status:** 🔲 Not started
+
 **What:** The fallback AI implementation that runs a model locally — no API calls, no rate limits.
 
-**Why:** When HuggingFace is down or rate limited, analysis must continue. The local model guarantees availability over quality.
-
 **Tasks:**
+- [ ] Install: `uv add transformers torch`
 - [ ] Create `app/ai/local.py` — `LocalAnalyser(BaseAnalyser)`:
-  - Uses `transformers` library: `uv add transformers torch`
   - Model loaded lazily — only on first call, not on import
-  - Same interface as `HuggingFaceAnalyser` — same input, same output shape
-  - Results marked `degraded=True` always
-  - Explanations and suggestions generated locally using the loaded model
+  - All results marked `degraded=True`
   - Return `AnalysisResult(engine="local", degraded=True)`
+- [ ] Write tests in `tests/unit/test_local_analyser.py`
+- [ ] Run ruff and full test suite
 
 **Commit message:**
 ```
@@ -623,21 +795,18 @@ feat(backend/ai): add local model analyser with lazy loading
 
 **Branch:** `feat/backend-ai-circuit-breaker`
 
-**What:** Tracks HuggingFace failures and automatically routes to the local model after 3 consecutive failures.
+**Status:** 🔲 Not started
 
-**Why:** Without a circuit breaker, a degraded HuggingFace API causes every job to timeout for 25 seconds before failing. The circuit breaker trips fast and routes around the problem.
+**What:** Tracks HuggingFace failures and automatically routes to the local model after 3 consecutive failures. Resets after a 5-minute cooldown.
 
 **Tasks:**
 - [ ] Create `app/ai/circuit_breaker.py` — `CircuitBreaker`:
-  - `failure_count: int` — resets to 0 on success
-  - `tripped: bool` — True when failure_count >= 3
-  - `tripped_at: datetime` — when it tripped
-  - `COOLDOWN_SECONDS = 300` (5 minutes)
-  - `record_failure()` — increment count, trip if >= 3
-  - `record_success()` — reset count, untrip
-  - `should_use_fallback()` — returns True if tripped AND cooldown not yet expired
-  - `get_analyser()` — returns `HuggingFaceAnalyser` or `LocalAnalyser` based on state
-- [ ] Singleton instance — imported and shared across all workers
+  - `record_failure()`, `record_success()`, `should_use_fallback()`, `get_analyser()`
+  - Trips after 3 consecutive failures
+  - Cooldown: 300 seconds (5 minutes)
+  - Singleton instance shared across all workers
+- [ ] Write tests in `tests/unit/test_circuit_breaker.py`
+- [ ] Run ruff and full test suite
 
 **Commit message:**
 ```
@@ -648,7 +817,7 @@ feat(backend/ai): add circuit breaker — 3 failures trip to local, 5min cooldow
 
 ## Epic 6 — Worker
 
-> The background process that picks jobs from the queue, runs analysis, saves results, and broadcasts via WebSocket.
+> The background process that picks jobs, runs analysis, saves results, and broadcasts via WebSocket.
 
 ---
 
@@ -656,25 +825,17 @@ feat(backend/ai): add circuit breaker — 3 failures trip to local, 5min cooldow
 
 **Branch:** `feat/backend-analysis-service-orchestration`
 
-**What:** The orchestration service that a worker job calls — fetch files, analyse, save results.
+**Status:** 🔲 Not started
 
-**Why:** The worker task function should be thin. All logic lives in the service so it is testable independently of Celery.
+**What:** The orchestration service the worker calls — fetch files, run AI analysis, save results.
 
 **Tasks:**
 - [ ] Create `app/services/analysis_service.py`:
-  - `fetch_changed_files(repo_full_name, commit_sha, github_token)`:
-    - Call GitHub API to get list of changed files for the commit
-    - Fetch file content for each changed file
-    - Return list of `{path, content, language}` dicts
-    - Language detected from file extension
-  - `run_analysis(files)`:
-    - Call `circuit_breaker.get_analyser().analyse(files)`
-    - Return `AnalysisResult`
-  - `save_results(db, job, commit, result)`:
-    - Write one `Score` row per dimension (5 total)
-    - Write one `Issue` row per flagged issue — including `explanation` and `suggestion`
-    - Update `Job` row: status=complete, ai_engine, degraded, analysis_ms, end_to_end_ms
-    - All writes in a single DB transaction — no partial results
+  - `fetch_changed_files(repo_full_name, commit_sha, github_token)`
+  - `run_analysis(files)` — calls circuit_breaker.get_analyser().analyse()
+  - `save_results(db, job, commit, result)` — single transaction, no partial writes
+- [ ] Write tests in `tests/unit/test_analysis_service.py`
+- [ ] Run ruff and full test suite
 
 **Commit message:**
 ```
@@ -687,21 +848,20 @@ feat(backend/services): add analysis service — fetch files, run AI, save resul
 
 **Branch:** `feat/backend-notification-service-websocket-broadcast`
 
-**What:** Broadcasts job events via WebSocket to all connected clients in the org.
+**Status:** 🔲 Not started
 
-**Why:** `analysis_service` calls `notification_service` after saving results — same pipeline domain. This is the correct cross-service call pattern.
+**What:** Broadcasts job events via WebSocket to all connected clients in the org with the full result payload.
+
+**Key decision — full payload over WebSocket:**
+Sending the full result in the WebSocket event allows the frontend to call `queryClient.setQueryData()` directly — eliminating one REST round trip after analysis completes.
 
 **Tasks:**
 - [ ] Create `app/services/notification_service.py`:
-  - `connections: dict[str, list[WebSocket]]` — keyed by `org_id`
-  - `register(org_id, websocket)` — add to connections dict
-  - `unregister(org_id, websocket)` — remove from connections dict
-  - `broadcast_job_started(org_id, job_id, commit_sha)` — send event to all org connections
-  - `broadcast_job_complete(org_id, payload)`:
-    - `payload` is the full result — scores, issues, job metadata
-    - Sends to all connections in the org
-    - Full payload means the frontend updates the cache directly — no REST refetch needed
-  - Handle disconnected clients gracefully — remove from dict on send failure
+  - `connections: dict[str, list[WebSocket]]` keyed by org_id
+  - `register()`, `unregister()`, `broadcast_job_started()`, `broadcast_job_complete()`
+  - Handle disconnected clients gracefully on send failure
+- [ ] Write tests in `tests/unit/test_notification_service.py`
+- [ ] Run ruff and full test suite
 
 **Commit message:**
 ```
@@ -714,26 +874,23 @@ feat(backend/services): add notification service — WebSocket broadcast with fu
 
 **Branch:** `feat/backend-worker-analyse-commit-task`
 
-**What:** The Celery task function that orchestrates the full analysis pipeline for one job.
+**Status:** 🔲 Not started
 
-**Why:** This is the function Celery calls. It must be idempotent — safe to retry. Every failure is logged with the job ID.
+**What:** The Celery task that orchestrates the full analysis pipeline. Idempotent — safe to retry.
 
 **Tasks:**
-- [ ] Create `app/worker/tasks.py` — `analyse_commit(job_id: str)`:
-  - Load job from DB by `job_id`
-  - If job status is already `complete` — return immediately (idempotency)
-  - Update job status to `processing`, record `queue_wait_ms`
-  - Broadcast `job.started` via `notification_service`
-  - Call `analysis_service.fetch_changed_files()`
-  - Call `analysis_service.run_analysis()`
-  - Call `analysis_service.save_results()`
-  - Broadcast `job.complete` with full payload via `notification_service`
-  - On any exception:
-    - Increment `job.retry_count`
-    - Set `job.error_message`
-    - Set `job.status = "failed"` if `retry_count >= 3`
-    - Log structured error with `job_id`, `error`, `retry_count`
-    - Re-raise so Celery handles the retry with backoff
+- [ ] Update `app/worker/tasks.py` — `analyse_commit(job_id: str)`:
+  - Idempotency guard — return immediately if job already complete
+  - Record queue_wait_ms on pickup
+  - Broadcast job.started → fetch files → run AI → save results → broadcast job.complete
+  - On exception: increment retry_count, log structured error, re-raise for Celery retry
+- [ ] Write tests in `tests/unit/test_worker_tasks.py`
+- [ ] Run ruff and full test suite
+
+**To run the Celery worker:**
+```
+uv run celery -A app.worker.queue.celery_app worker --loglevel=info
+```
 
 **Commit message:**
 ```
@@ -752,24 +909,13 @@ feat(backend/worker): add analyse_commit task — full pipeline, idempotent, str
 
 **Branch:** `feat/backend-dashboard-commit-response-schemas`
 
-**What:** Pydantic response schemas for the developer dashboard and commit results.
+**Status:** 🔲 Not started
 
 **Tasks:**
 - [ ] Create `app/schemas/dashboard.py`:
-  - `ScoreResponse` — `dimension: str`, `score: int`
-  - `IssueResponse` — all issue fields including `explanation` and `suggestion`
-  - `DeveloperDashboardResponse`:
-    - `latest_commit: dict` — sha, message, pushed_at
-    - `scores: list[ScoreResponse]`
-    - `issues: list[IssueResponse]`
-    - `growth: list[dict]` — last 30 days of scores for growth chart
-    - `streak: int` — consecutive clean commits
-    - `job_status: str` — current job state
-  - `CommitDetailResponse`:
-    - `commit: dict`
-    - `job: dict` — status, ai_engine, degraded, end_to_end_ms
-    - `scores: list[ScoreResponse]`
-    - `issues: list[IssueResponse]`
+  - `ScoreResponse`, `IssueResponse`, `DeveloperDashboardResponse`, `CommitDetailResponse`
+- [ ] Write tests in `tests/unit/test_dashboard_schemas.py`
+- [ ] Run ruff and full test suite
 
 **Commit message:**
 ```
@@ -782,20 +928,19 @@ feat(backend/schemas): add developer dashboard and commit detail response schema
 
 **Branch:** `feat/backend-dashboard-service-developer-view`
 
+**Status:** 🔲 Not started
+
 **What:** Queries the database and builds the role-aware dashboard response. Receives the resolved user as a parameter — never re-fetches from auth.
+
+**Key decision — user passed as parameter not re-fetched:**
+`dashboard_service` receives the user object from the route handler (which got it from middleware). It never calls `auth_service` to re-fetch — that would be a cross-domain service call, which is the anti-pattern we explicitly ruled out.
 
 **Tasks:**
 - [ ] Create `app/services/dashboard_service.py`:
-  - `get_developer_dashboard(db, user)`:
-    - Fetch latest commit for this user in their org
-    - Fetch scores and issues for that commit
-    - Fetch last 30 days of daily average scores for growth chart
-    - Calculate streak — consecutive commits with no critical issues
-    - Return `DeveloperDashboardResponse`
-  - `get_commit_detail(db, user, sha)`:
-    - Fetch commit by SHA scoped to `user.org_id`
-    - Fetch job, scores, and issues
-    - Return `CommitDetailResponse`
+  - `get_developer_dashboard(db, user)` — latest commit, scores, issues, 30-day growth, streak
+  - `get_commit_detail(db, user, sha)` — full commit result scoped to user.org_id
+- [ ] Write tests in `tests/unit/test_dashboard_service.py`
+- [ ] Run ruff and full test suite
 
 **Commit message:**
 ```
@@ -808,22 +953,14 @@ feat(backend/services): add dashboard service — developer view and commit deta
 
 **Branch:** `feat/backend-routes-dashboard-commits-repos`
 
-**What:** The REST endpoints the React frontend calls to load dashboard data and commit results.
+**Status:** 🔲 Not started
 
 **Tasks:**
-- [ ] Create `app/routes/dashboard.py`:
-  - `GET /api/dashboard/developer` (protected):
-    - Inject current user via auth middleware
-    - Call `dashboard_service.get_developer_dashboard(db, user)`
-    - Return `DeveloperDashboardResponse`
-- [ ] Create `app/routes/repos.py`:
-  - `GET /api/commits/:sha/results` (protected):
-    - Call `dashboard_service.get_commit_detail(db, user, sha)`
-    - Return `CommitDetailResponse`
-  - `GET /api/repos` (protected):
-    - List all repos connected to the user's org
-    - Return list of repo summaries
+- [ ] Create `app/routes/dashboard.py` — `GET /api/dashboard/developer`
+- [ ] Create `app/routes/repos.py` — `GET /api/commits/:sha/results`, `GET /api/repos`
 - [ ] Register both routers in `main.py`
+- [ ] Write tests in `tests/unit/test_dashboard_routes.py`
+- [ ] Run ruff and full test suite
 
 **Commit message:**
 ```
@@ -836,21 +973,18 @@ feat(backend/routes): add developer dashboard, commit detail, and repos endpoint
 
 **Branch:** `feat/backend-websocket-route-live-events`
 
-**What:** The persistent WebSocket connection that pushes live analysis events to the dashboard.
+**Status:** 🔲 Not started
 
-**Why:** This is what makes results appear in real time without refreshing. The full payload is sent here so the frontend can update the React Query cache directly.
+**What:** The persistent WebSocket connection that pushes full result payloads to the dashboard.
 
 **Tasks:**
 - [ ] Create `app/routes/websocket.py`:
-  - `WS /ws/live`:
-    - Accept JWT as `?token=` query parameter on handshake
-    - Decode and validate JWT — close with code 4001 if invalid
-    - Extract `org_id` from JWT
-    - Register connection with `notification_service.register(org_id, websocket)`
-    - Keep connection alive — send ping every 30 seconds
-    - On disconnect — call `notification_service.unregister(org_id, websocket)`
+  - `WS /ws/live` — JWT auth on handshake via `?token=` query param
+  - Register with notification_service on connect, unregister on disconnect
+  - Ping every 30 seconds to detect silent drops
 - [ ] Register WebSocket router in `main.py`
-- [ ] Test manually using a WebSocket client (e.g. `wscat -c "ws://localhost:8000/ws/live?token=..."`)
+- [ ] Write tests in `tests/unit/test_websocket_route.py`
+- [ ] Run ruff and full test suite
 
 **Commit message:**
 ```
@@ -869,27 +1003,15 @@ feat(backend/routes): add WebSocket /ws/live — auth on handshake, full payload
 
 **Branch:** `feat/frontend-dependencies-react-query-tailwind`
 
-**What:** Install all frontend dependencies and configure the React Query client and environment.
+**Status:** 🔲 Not started
 
 **Tasks:**
-- [ ] Install dependencies:
-  ```
-  npm install @tanstack/react-query axios react-router-dom recharts
-  npm install -D tailwindcss @tailwindcss/vite
-  ```
+- [ ] `npm install @tanstack/react-query axios react-router-dom recharts`
+- [ ] `npm install -D tailwindcss @tailwindcss/vite`
 - [ ] Configure Tailwind in `vite.config.js`
-- [ ] Create `src/queryClient.js`:
-  - React Query client with:
-    - `staleTime: 30000` (30 seconds)
-    - `retry: 2`
-    - `refetchOnWindowFocus: false`
-- [ ] Update `src/main.jsx`:
-  - Wrap app in `QueryClientProvider` with the query client
-  - Wrap app in `BrowserRouter`
-  - Wrap app in `AuthContext` provider
-  - Wrap app in `WebSocketContext` provider
-- [ ] Update `.env`:
-  - `VITE_API_BASE_URL=http://localhost:8000`
+- [ ] Create `src/queryClient.js` — staleTime 30s, retry 2, no refetch on focus
+- [ ] Wrap `src/main.jsx` in QueryClientProvider, BrowserRouter, AuthContext, WebSocketContext
+- [ ] Confirm `VITE_API_BASE_URL=http://localhost:8000` in `.env`
 
 **Commit message:**
 ```
@@ -902,24 +1024,12 @@ feat(frontend): add React Query, Axios, React Router, Recharts, and Tailwind
 
 **Branch:** `feat/frontend-auth-context-axios-client`
 
-**What:** The `AuthContext` that holds the JWT and user state across the app, and the Axios client that attaches the JWT to every request.
+**Status:** 🔲 Not started
 
 **Tasks:**
-- [ ] Create `src/api/client.js`:
-  - Axios instance with `baseURL` from `VITE_API_BASE_URL`
-  - Request interceptor — attach `Authorization: Bearer <token>` from localStorage
-  - Response interceptor — on 401 redirect to `/auth/github`
-
-- [ ] Create `src/context/AuthContext.jsx`:
-  - Store JWT in localStorage
-  - Decode JWT on load — extract `user_id`, `org_id`, `primary_role`, `active_role`
-  - Expose: `user`, `token`, `isAuthenticated`, `isOnboarded`, `login(token)`, `logout()`
-  - `login(token)` — save to localStorage, decode, set state
-  - `logout()` — clear localStorage, redirect to login
-
-- [ ] Create `src/hooks/useAuth.js`:
-  - Reads from `AuthContext`
-  - Exposes: `user`, `isAuthenticated`, `isOnboarded`, `activeRole`, `primaryRole`
+- [ ] Create `src/api/client.js` — Axios with JWT interceptor, 401 redirect handler
+- [ ] Create `src/context/AuthContext.jsx` — JWT in localStorage, decoded on load
+- [ ] Create `src/hooks/useAuth.js`
 
 **Commit message:**
 ```
@@ -932,25 +1042,14 @@ feat(frontend): add AuthContext, Axios client with JWT interceptor, useAuth hook
 
 **Branch:** `feat/frontend-websocket-context-direct-cache-update`
 
-**What:** A single WebSocket connection shared across the entire app via context, with automatic reconnection and direct React Query cache updates.
+**Status:** 🔲 Not started
 
-**Why:** Without this, every component that needs live data would open its own WebSocket connection. One shared connection is correct.
+**Key decision — direct cache update over invalidation:**
+On `job.complete` event, call `queryClient.setQueryData()` directly with the full payload — eliminates one REST round trip compared to invalidating and refetching.
 
 **Tasks:**
-- [ ] Create `src/context/WebSocketContext.jsx`:
-  - Opens one WS connection to `/ws/live?token=<jwt>` on mount
-  - Stores connection in context
-  - Reconnection with exponential backoff: 1s → 2s → 4s → 8s
-  - Exposes: `isConnected`, `lastEvent`
-
-- [ ] Create `src/hooks/useWebSocket.js`:
-  - Reads from `WebSocketContext`
-  - On `job.complete` event:
-    - Parse full payload from event
-    - Call `queryClient.setQueryData(['dashboard', 'developer'], payload)` directly
-    - No REST refetch — cache updated in memory immediately
-  - On `job.started` event:
-    - Update job status in cache to show live indicator
+- [ ] Create `src/context/WebSocketContext.jsx` — single shared WS connection, exponential backoff reconnection
+- [ ] Create `src/hooks/useWebSocket.js` — direct cache update on job.complete, REST fill on reconnect
 
 **Commit message:**
 ```
@@ -963,21 +1062,11 @@ feat(frontend): add WebSocket context and hook with direct React Query cache upd
 
 **Branch:** `feat/frontend-routing-auth-guard`
 
-**What:** Route definitions and an auth guard that redirects unauthenticated users to login and un-onboarded users to onboarding.
+**Status:** 🔲 Not started
 
 **Tasks:**
-- [ ] Create `src/App.jsx`:
-  - Routes:
-    - `/` → redirect to `/dashboard` if authenticated, else `/login`
-    - `/login` → login page with GitHub OAuth button
-    - `/auth/callback` → handles OAuth callback, saves token, redirects
-    - `/onboarding` → onboarding page (protected — must be authenticated)
-    - `/dashboard` → dashboard page (protected — must be onboarded)
-    - `/commits/:sha` → commit detail page (protected)
-  - Auth guard component — wraps protected routes:
-    - Not authenticated → redirect to `/login`
-    - Authenticated but not onboarded → redirect to `/onboarding`
-    - Authenticated and onboarded → render children
+- [ ] Create `src/App.jsx` with all routes
+- [ ] Auth guard: not authenticated → /login, not onboarded → /onboarding, onboarded → render
 
 **Commit message:**
 ```
@@ -988,50 +1077,22 @@ feat(frontend): add app routing, auth guard, and OAuth callback handler
 
 ## Epic 9 — Frontend Pages and Components
 
-> The actual UI — onboarding, dashboard, and commit detail.
-
 ---
 
 ### Issue 9.1 — Shared components
 
 **Branch:** `feat/frontend-shared-components-topnav-scores-issues`
 
-**What:** The component building blocks used across every view.
+**Status:** 🔲 Not started
 
 **Tasks:**
-- [ ] `src/components/layout/TopNav.jsx`:
-  - DevLens logo + name
-  - User avatar (from JWT)
-  - Logout button
-  - Live indicator dot — pulsing when WebSocket connected and job processing
-
-- [ ] `src/components/scores/ScoreRing.jsx`:
-  - SVG animated ring — draws itself on mount
-  - Props: `value` (0–100), `label`, `color`
-  - Number animates from 0 to value on first render
-
-- [ ] `src/components/scores/ScoreGrid.jsx`:
-  - Renders 5 `ScoreRing` components in a row
-  - Props: `scores` object keyed by dimension name
-
-- [ ] `src/components/issues/IssueRow.jsx`:
-  - Severity dot, title, file path and line number, timestamp
-  - Props: `issue` object
-
-- [ ] `src/components/issues/IssueExplanation.jsx`:
-  - Expandable panel — click to reveal
-  - Shows `explanation` in plain English
-  - Shows `suggestion` as a code block
-  - Props: `explanation`, `suggestion`
-
-- [ ] `src/components/issues/IssueList.jsx`:
-  - List of `IssueRow` + `IssueExplanation` pairs
-  - Filter buttons — by severity (critical / warning / info)
-  - Props: `issues` array
-
-- [ ] `src/components/DegradedWarning.jsx`:
-  - Yellow banner — "Analysis ran on local fallback model — results may vary"
-  - Only shown when `job.degraded === true`
+- [ ] `TopNav.jsx` — logo, avatar, logout, live indicator dot
+- [ ] `ScoreRing.jsx` — animated SVG ring, number counts up on mount
+- [ ] `ScoreGrid.jsx` — 5 ScoreRings in a row
+- [ ] `IssueRow.jsx` — severity, title, file:line, timestamp
+- [ ] `IssueExplanation.jsx` — expandable why + fix
+- [ ] `IssueList.jsx` — filterable by severity
+- [ ] `DegradedWarning.jsx` — yellow banner when local model ran
 
 **Commit message:**
 ```
@@ -1044,17 +1105,10 @@ feat(frontend/components): add shared components — TopNav, ScoreRing, ScoreGri
 
 **Branch:** `feat/frontend-onboarding-role-selection`
 
-**What:** The first-login screen where the user picks their primary role.
+**Status:** 🔲 Not started
 
 **Tasks:**
-- [ ] Create `src/pages/Onboarding.jsx`:
-  - Five role cards — one per role
-  - Each card has role name, one-line description of what they see
-  - Click a card to select it — highlighted state
-  - "Get started" button — disabled until a role is selected
-  - On submit: POST `/auth/onboarding` with selected role
-  - On success: save new JWT, redirect to `/dashboard`
-  - Clean, welcoming design — first impression of DevLens
+- [ ] `src/pages/Onboarding.jsx` — 5 role cards, POST /auth/onboarding on submit, save JWT, redirect
 
 **Commit message:**
 ```
@@ -1067,24 +1121,11 @@ feat(frontend/pages): add onboarding page — role selection on first login
 
 **Branch:** `feat/frontend-hooks-dashboard-commit-queries`
 
-**What:** The React Query hooks that fetch developer dashboard data.
+**Status:** 🔲 Not started
 
 **Tasks:**
-- [ ] Create `src/hooks/useDashboard.js`:
-  - `useDeveloperDashboard()`:
-    - `useQuery(['dashboard', 'developer'], () => api.getDashboard('developer'))`
-    - Returns `data`, `isLoading`, `isError`
-
-- [ ] Create `src/api/dashboard.js`:
-  - `getDashboard(role)` — GET `/api/dashboard/${role}`
-  - `getOrgDashboard()` — GET `/api/dashboard/org`
-
-- [ ] Create `src/hooks/useCommit.js`:
-  - `useCommit(sha)` — `useQuery(['commit', sha], () => api.getCommit(sha))`
-
-- [ ] Create `src/api/commits.js`:
-  - `getCommit(sha)` — GET `/api/commits/${sha}/results`
-  - `getRepos()` — GET `/api/repos`
+- [ ] `src/hooks/useDashboard.js`, `src/api/dashboard.js`
+- [ ] `src/hooks/useCommit.js`, `src/api/commits.js`
 
 **Commit message:**
 ```
@@ -1097,25 +1138,11 @@ feat(frontend/hooks): add useDashboard and useCommit React Query hooks
 
 **Branch:** `feat/frontend-developer-dashboard-view`
 
-**What:** The main dashboard the developer sees after every push.
+**Status:** 🔲 Not started
 
 **Tasks:**
-- [ ] Create `src/views/DeveloperView.jsx`:
-  - Fetch data via `useDeveloperDashboard()`
-  - Loading state — skeleton placeholders
-  - Error state — friendly message with retry
-  - Empty state — "No pushes yet. Connect a repo and push some code."
-  - Renders:
-    - Latest commit info — branch, message, time ago
-    - `ScoreGrid` — 5 animated rings with latest scores
-    - `DegradedWarning` if `job.degraded`
-    - `IssueList` — all issues filterable by severity
-    - Growth chart — line chart of scores over last 30 days using Recharts
-    - Streak badge — "8 consecutive clean commits"
-
-- [ ] Create `src/pages/Dashboard.jsx`:
-  - Reads `activeRole` from `useAuth()`
-  - For Phase 1: renders `DeveloperView` regardless of role (other views added in Phase 2)
+- [ ] `src/views/DeveloperView.jsx` — loading/error/empty states, ScoreGrid, IssueList, GrowthChart, StreakBadge
+- [ ] `src/pages/Dashboard.jsx` — reads activeRole, renders DeveloperView for Phase 1
 
 **Commit message:**
 ```
@@ -1128,16 +1155,10 @@ feat(frontend/views): add developer dashboard — scores, issues, growth chart, 
 
 **Branch:** `feat/frontend-commit-detail-page`
 
-**What:** The full result page for a single commit — all files, all issues with explanations.
+**Status:** 🔲 Not started
 
 **Tasks:**
-- [ ] Create `src/pages/CommitDetail.jsx`:
-  - Fetch via `useCommit(sha)` — sha from URL params
-  - Shows: commit SHA, branch, message, author, time
-  - Job metadata — AI engine used, degraded flag, end-to-end latency
-  - `ScoreGrid` for this commit
-  - `IssueList` — all issues with expandable explanations and suggestions
-  - Back button → dashboard
+- [ ] `src/pages/CommitDetail.jsx` — commit info, job metadata, ScoreGrid, IssueList with expandable explanations
 
 **Commit message:**
 ```
@@ -1150,16 +1171,10 @@ feat(frontend/pages): add commit detail page — full result with explanations
 
 **Branch:** `feat/frontend-growth-chart-recharts`
 
-**What:** The line chart showing a developer's score trend over the last 30 days.
+**Status:** 🔲 Not started
 
 **Tasks:**
-- [ ] Create `src/components/charts/GrowthChart.jsx`:
-  - Recharts `LineChart`
-  - One line per dimension — togglable via legend
-  - X axis — dates
-  - Y axis — 0 to 100
-  - Hover tooltip — shows exact score per dimension on a given day
-  - Props: `data` array of `{date, security, performance, readability, complexity, bug_risk}`
+- [ ] `src/components/charts/GrowthChart.jsx` — Recharts LineChart, one line per dimension, hover tooltip
 
 **Commit message:**
 ```
@@ -1170,33 +1185,23 @@ feat(frontend/components): add GrowthChart — Recharts line chart for score tre
 
 ## Epic 10 — Integration and Demo Readiness
 
-> Wire everything together, test the full flow end to end, and confirm the demo moment works.
-
 ---
 
 ### Issue 10.1 — Cloudflare Tunnel setup
 
 **Branch:** `feat/infra-cloudflare-tunnel-webhook-ingress`
 
-**What:** Expose the local FastAPI server to GitHub webhooks via a stable public URL.
+**Status:** 🔲 Not started
 
-**Why:** GitHub webhooks require a publicly accessible URL. Cloudflare Tunnel provides this for free with no session timeout — unlike ngrok.
+**Why Cloudflare Tunnel over ngrok:**
+ngrok's free tier resets the URL on every restart — every restart means updating the webhook URL in GitHub. Cloudflare Tunnel gives a stable URL that never changes, is completely free, and has no session timeout.
 
 **Tasks:**
-- [ ] Install `cloudflared`:
-  - Mac: `brew install cloudflare/cloudflare/cloudflared`
-  - Windows: download from cloudflare.com
-- [ ] Start tunnel pointing to FastAPI:
-  ```
-  cloudflared tunnel --url http://localhost:8000
-  ```
-- [ ] Copy the generated `https://something.trycloudflare.com` URL
-- [ ] Register this URL as the webhook endpoint on your test GitHub repo:
-  - GitHub repo → Settings → Webhooks → Add webhook
-  - Payload URL: `https://something.trycloudflare.com/webhook/github`
-  - Content type: `application/json`
-  - Secret: same value as `GITHUB_WEBHOOK_SECRET` in `.env`
-  - Events: Just the push event
+- [ ] Install cloudflared (Mac: brew, Windows: cloudflare.com/products/tunnel)
+- [ ] `cloudflared tunnel --url http://localhost:8000`
+- [ ] Register `https://something.trycloudflare.com/webhook/github` as GitHub webhook
+- [ ] Secret: same value as `GITHUB_WEBHOOK_SECRET` in `.env`
+- [ ] Add setup instructions to README
 
 **Commit message:**
 ```
@@ -1207,21 +1212,14 @@ docs(infra): add Cloudflare Tunnel setup instructions to README
 
 ### Issue 10.2 — Start the Celery worker
 
-**Branch:** `feat/infra-Celery-worker-setup`
+**Branch:** `feat/infra-rq-worker-setup`
 
-**What:** Run the background worker process that pulls jobs from Redis and runs analysis.
+**Status:** 🔲 Not started
 
 **Tasks:**
-- [ ] Start the worker in a separate terminal:
-  ```
-  uv run Celery worker devlens
-  ```
-- [ ] Verify the worker is listening — should print:
-  ```
-  Worker devlens: started, version X.X.X
-  Listening on devlens...
-  ```
-- [ ] Add worker start command to the project README
+- [ ] Start worker: `uv run celery -A app.worker.queue.celery_app worker --loglevel=info`
+- [ ] Verify output shows `app.worker.tasks.analyse_commit` registered
+- [ ] Add worker start command to README
 
 **Commit message:**
 ```
@@ -1234,35 +1232,24 @@ docs(worker): add Celery worker start instructions to README
 
 **Branch:** `test/phase-1-end-to-end-integration`
 
-**What:** Manually test the complete Phase 1 flow from git push to dashboard result.
+**Status:** 🔲 Not started
 
-**Why:** Every piece has been tested individually. This confirms they work together as a system.
-
-**Checklist — run through this in order:**
-- [ ] FastAPI server running on port 8000
-- [ ] Redis running locally
-- [ ] Celery worker running and listening
-- [ ] Cloudflare Tunnel running and webhook registered on GitHub
-- [ ] React frontend running on port 5173
+**All must be running:**
+- [ ] FastAPI: `uv run uvicorn app.main:app --reload`
+- [ ] Celery: `uv run celery -A app.worker.queue.celery_app worker --loglevel=info`
+- [ ] Memurai / Redis
+- [ ] Cloudflare Tunnel with webhook registered
+- [ ] React frontend: `npm run dev`
 
 **The test:**
-- [ ] Open the DevLens frontend in a browser
-- [ ] Click "Login with GitHub" — complete OAuth flow
-- [ ] Complete onboarding — select "Developer" role
-- [ ] Land on the developer dashboard — should show empty state
-- [ ] Open a separate terminal and push a commit with intentional issues to the connected repo:
-  ```python
-  # Commit this — SQL injection issue
-  def get_user(user_id):
-      query = f"SELECT * FROM users WHERE id = {user_id}"
-      return db.execute(query)
-  ```
-- [ ] Watch the dashboard — within 2 seconds the live indicator should activate
-- [ ] Within 30 seconds scores and issues should appear — no refresh
-- [ ] Confirm the security issue is flagged with an explanation and suggestion
-- [ ] Confirm `end_to_end_ms` in the job table is under 30000
-- [ ] Click the commit row — confirm commit detail page shows full results
-- [ ] Confirm `DegradedWarning` does NOT appear (HuggingFace ran successfully)
+- [ ] Login with GitHub, complete onboarding
+- [ ] Push a commit with an intentional SQL injection issue
+- [ ] Live indicator activates within 2 seconds
+- [ ] Scores and issues appear within 30 seconds — no refresh
+- [ ] Security issue flagged with explanation and suggestion
+- [ ] `end_to_end_ms` in jobs table under 30000
+- [ ] Commit detail page shows full results
+- [ ] DegradedWarning does NOT appear (HuggingFace ran)
 
 **Commit message:**
 ```
@@ -1275,40 +1262,30 @@ test(integration): phase 1 end-to-end flow verified
 
 **Branch:** `docs/phase-1-setup-and-run-instructions`
 
-**What:** Document how to run DevLens Phase 1 from a fresh clone.
+**Status:** 🔲 Not started
 
 **Tasks:**
-- [ ] Update root `README.md` with:
-  - What DevLens is — one paragraph
-  - Phase 1 scope — what is built
-  - Prerequisites: Python 3.11+, Node 18+, PostgreSQL, Redis, uv, cloudflared
-  - Backend setup:
-    ```bash
-    cd backend
-    uv sync
-    cp .env.example .env  # fill in values
-    uv run alembic upgrade head
-    uv run uvicorn app.main:app --reload
-    # In a separate terminal:
-    uv run Celery worker devlens
-    ```
-  - Frontend setup:
-    ```bash
-    cd frontend
-    npm install
-    cp .env.example .env  # fill in values
-    npm run dev
-    ```
-  - Webhook setup — Cloudflare Tunnel instructions
-  - Submodule note:
-    ```bash
-    git submodule update --init --recursive
-    ```
+- [ ] Backend setup, frontend setup, Cloudflare Tunnel instructions
+- [ ] Submodule note: `git submodule update --init --recursive`
+- [ ] Prerequisites: Python 3.11+, Node 18+, PostgreSQL, Memurai, uv, cloudflared
 
 **Commit message:**
 ```
 docs(readme): add Phase 1 setup and run instructions
 ```
+
+---
+
+## Changes from original plan
+
+| Original | Changed to | Reason |
+|---|---|---|
+| `rq` for job queue | `celery` | RQ uses Unix fork — incompatible with Windows |
+| `ngrok` for tunnel | Cloudflare Tunnel | ngrok free tier resets URL on restart |
+| `Config` inner class in pydantic | `model_config = SettingsConfigDict(...)` | Pydantic V2 deprecation |
+| `@app.on_event` in FastAPI | `lifespan` context manager | FastAPI deprecation |
+| WS invalidates React Query cache | WS sends full payload, direct cache update | Removes one round trip |
+| `patch()` for FastAPI dependency mocking | `app.dependency_overrides` | FastAPI caches dependency references at startup |
 
 ---
 
@@ -1318,10 +1295,12 @@ docs(readme): add Phase 1 setup and run instructions
 - [ ] A real push triggers a real webhook
 - [ ] Real AI analysis runs — HuggingFace or local fallback
 - [ ] Scores and issues appear on the dashboard in real time via WebSocket
-- [ ] Every issue has an explanation and a suggested fix
+- [ ] Every issue has a plain-English explanation and a suggested fix
 - [ ] End-to-end latency is under 30 seconds
 - [ ] The growth chart shows trend data after multiple pushes
 - [ ] The commit detail page shows the full result for any commit
+- [ ] Full test suite passes — unit and integration
+- [ ] ruff format and ruff check pass with zero errors
 
 ---
 
