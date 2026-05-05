@@ -1,7 +1,6 @@
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -54,22 +53,26 @@ def test_github_login_includes_required_scopes():
 def test_callback_redirects_to_onboarding_for_new_user():
     mock_user = make_mock_user(primary_role=None)
 
-    with patch(
-        "app.routes.auth.exchange_github_code",
-        new_callable=AsyncMock,
-        return_value="gho_test_token",
-    ), patch(
-        "app.routes.auth.get_github_user",
-        new_callable=AsyncMock,
-        return_value={
-            "id": 12345,
-            "login": "atim",
-            "avatar_url": None,
-            "email": None,
-        },
-    ), patch(
-        "app.routes.auth.get_or_create_user",
-        return_value=mock_user,
+    with (
+        patch(
+            "app.routes.auth.exchange_github_code",
+            new_callable=AsyncMock,
+            return_value="gho_test_token",
+        ),
+        patch(
+            "app.routes.auth.get_github_user",
+            new_callable=AsyncMock,
+            return_value={
+                "id": 12345,
+                "login": "atim",
+                "avatar_url": None,
+                "email": None,
+            },
+        ),
+        patch(
+            "app.routes.auth.get_or_create_user",
+            return_value=mock_user,
+        ),
     ):
         response = client.get("/auth/callback?code=test_code")
 
@@ -80,22 +83,26 @@ def test_callback_redirects_to_onboarding_for_new_user():
 def test_callback_redirects_to_dashboard_for_returning_user():
     mock_user = make_mock_user(primary_role="developer")
 
-    with patch(
-        "app.routes.auth.exchange_github_code",
-        new_callable=AsyncMock,
-        return_value="gho_test_token",
-    ), patch(
-        "app.routes.auth.get_github_user",
-        new_callable=AsyncMock,
-        return_value={
-            "id": 12345,
-            "login": "atim",
-            "avatar_url": None,
-            "email": None,
-        },
-    ), patch(
-        "app.routes.auth.get_or_create_user",
-        return_value=mock_user,
+    with (
+        patch(
+            "app.routes.auth.exchange_github_code",
+            new_callable=AsyncMock,
+            return_value="gho_test_token",
+        ),
+        patch(
+            "app.routes.auth.get_github_user",
+            new_callable=AsyncMock,
+            return_value={
+                "id": 12345,
+                "login": "atim",
+                "avatar_url": None,
+                "email": None,
+            },
+        ),
+        patch(
+            "app.routes.auth.get_or_create_user",
+            return_value=mock_user,
+        ),
     ):
         response = client.get("/auth/callback?code=test_code")
 

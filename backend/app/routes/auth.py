@@ -6,7 +6,12 @@ from app.config import settings
 from app.database import get_db
 from app.middleware.auth import get_current_user
 from app.models.user import User
-from app.schemas.auth import AuthResponse, OnboardingRequest, RoleSwitchRequest, UserResponse
+from app.schemas.auth import (
+    AuthResponse,
+    OnboardingRequest,
+    RoleSwitchRequest,
+    UserResponse,
+)
 from app.services.auth_service import (
     create_jwt,
     exchange_github_code,
@@ -65,23 +70,17 @@ async def github_callback(code: str, db: Session = Depends(get_db)):
         # Something went wrong — redirect to login with a generic error.
         # We never expose the actual exception to the browser URL because
         # error messages can leak information about our system internals.
-        return RedirectResponse(
-            url=f"{settings.FRONTEND_URL}/login?error=auth_failed"
-        )
+        return RedirectResponse(url=f"{settings.FRONTEND_URL}/login?error=auth_failed")
 
     # Issue a DevLens JWT for this user
     token = create_jwt(user)
 
     # New user — send them to onboarding to pick their primary role
     if not is_onboarded(user):
-        return RedirectResponse(
-            url=f"{settings.FRONTEND_URL}/onboarding?token={token}"
-        )
+        return RedirectResponse(url=f"{settings.FRONTEND_URL}/onboarding?token={token}")
 
     # Returning user — send them straight to the dashboard
-    return RedirectResponse(
-        url=f"{settings.FRONTEND_URL}/dashboard?token={token}"
-    )
+    return RedirectResponse(url=f"{settings.FRONTEND_URL}/dashboard?token={token}")
 
 
 # ─── Onboarding: Set primary role (called once, first login only) ─────────────

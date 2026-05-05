@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     # We build it from FRONTEND_URL so it automatically updates between
     # development and production environments.
     @property
-    def GITHUB_REDIRECT_URI(self) -> str:
+    def GITHUB_REDIRECT_URI(self) -> str:  # noqa: N802
         return f"{self.FRONTEND_URL}/auth/callback"
 
 
