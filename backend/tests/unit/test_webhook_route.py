@@ -71,6 +71,7 @@ client = TestClient(app, raise_server_exceptions=False)
 def test_valid_push_returns_202():
     """A correctly signed push event is accepted and returns 202."""
     import uuid
+
     mock_user = MagicMock()
     mock_user.org_id = uuid.uuid4()
     mock_user.github_id = 99
@@ -85,7 +86,10 @@ def test_valid_push_returns_202():
     with (
         patch("app.routes.webhook.webhook_service.validate_signature"),
         patch("app.routes.webhook.webhook_service.is_duplicate", return_value=False),
-        patch("app.routes.webhook.webhook_service.enqueue_analysis", return_value="job-123"),
+        patch(
+            "app.routes.webhook.webhook_service.enqueue_analysis",
+            return_value="job-123",
+        ),
     ):
         resp = client.post(
             "/webhook/github",
@@ -151,6 +155,7 @@ def test_duplicate_sha_returns_200():
 def test_enqueue_analysis_is_called_for_valid_push():
     """enqueue_analysis is called exactly once for a valid new push."""
     import uuid
+
     mock_user = MagicMock()
     mock_user.org_id = uuid.uuid4()
     mock_user.github_id = 99
@@ -165,7 +170,10 @@ def test_enqueue_analysis_is_called_for_valid_push():
     with (
         patch("app.routes.webhook.webhook_service.validate_signature"),
         patch("app.routes.webhook.webhook_service.is_duplicate", return_value=False),
-        patch("app.routes.webhook.webhook_service.enqueue_analysis", return_value="job-123") as mock_enqueue,
+        patch(
+            "app.routes.webhook.webhook_service.enqueue_analysis",
+            return_value="job-123",
+        ) as mock_enqueue,
     ):
         client.post(
             "/webhook/github",

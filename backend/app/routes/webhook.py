@@ -54,9 +54,7 @@ async def github_webhook(
     from app.models.user import User
 
     repo_row = (
-        db.query(Repo)
-        .filter(Repo.github_repo_id == payload.repository.id)
-        .first()
+        db.query(Repo).filter(Repo.github_repo_id == payload.repository.id).first()
     )
 
     if repo_row:
@@ -65,9 +63,7 @@ async def github_webhook(
         # Repo not seen before — look up the pusher to get their org_id.
         # The pusher name is their GitHub username; match against username column.
         pusher_user = (
-            db.query(User)
-            .filter(User.username == payload.pusher.name)
-            .first()
+            db.query(User).filter(User.username == payload.pusher.name).first()
         )
         if not pusher_user:
             # Unknown pusher — return 200 so GitHub doesn't retry endlessly.
@@ -75,9 +71,7 @@ async def github_webhook(
         org_id = pusher_user.org_id
 
     # Derive the commit author's GitHub ID from the pusher user row if available.
-    author_row = (
-        db.query(User).filter(User.username == payload.pusher.name).first()
-    )
+    author_row = db.query(User).filter(User.username == payload.pusher.name).first()
     author_github_id = author_row.github_id if author_row else None
 
     # Extract branch name from ref (e.g. "refs/heads/main" → "main").
